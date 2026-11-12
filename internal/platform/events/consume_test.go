@@ -178,3 +178,31 @@ func TestConsume_InvalidJSONGoesToDLQ(t *testing.T) {
 	}
 	require.False(t, called.Load())
 }
+
+func TestConsume_FailedDLQPublishIsRetriedNotLost(t *testing.T) {
+	_, js := setup(t)
+	ctx := context.Background()
+	require.NoError(t, js.DeleteStream(ctx, "DLQ"))
+
+	var calls atomic.Int32
+	startConsumer(t, js, events.ConsumerSpec{
+		Stream: "ORDERS", Durable: "test", Subjects: []events.Subject{events.OrderCreated},
+		MaxDeliver: 1, NakDelays: []time.Duration{50 * time.Millisecond},
+	}, func(context.Context, events.Envelope) error {
+		calls.Add(1)
+		return fmt.Errorf("bad input: %w", events.ErrPermanent)
+	})
+	publishCreated(t, js, uuid.New())
+
+	// The DLQ stream is gone, so dead-lettering fails and the message is redelivered.
+	require.Eventually(t, func() bool { return calls.Load() >= 2 }, 10*time.Second, 20*time.Millisecond)
+
+	require.NoError(t, events.EnsureStreams(ctx, js))
+	dlq := dlqMessages(t, js, "dlq.test.orders.created")
+	select {
+	case m := <-dlq:
+		require.Equal(t, "orders.created", m.Headers().Get("X-Original-Subject"))
+	case <-time.After(10 * time.Second):
+		t.Fatal("message was lost after DLQ publish failure")
+	}
+}

@@ -49,11 +49,13 @@ func Consume(ctx context.Context, js jetstream.JetStream, spec ConsumerSpec, h H
 		filters[i] = string(s)
 	}
 	cfg := jetstream.ConsumerConfig{
-		Durable:        spec.Durable,
-		AckPolicy:      jetstream.AckExplicitPolicy,
-		AckWait:        ackWait,
-		DeliverPolicy:  jetstream.DeliverAllPolicy,
-		MaxDeliver:     spec.MaxDeliver,
+		Durable:       spec.Durable,
+		AckPolicy:     jetstream.AckExplicitPolicy,
+		AckWait:       ackWait,
+		DeliverPolicy: jetstream.DeliverAllPolicy,
+		// MaxDeliver is enforced client-side only: a server-side limit would stop
+		// redelivery after the last attempt, losing a message whose DLQ publish failed.
+		MaxDeliver:     -1,
 		FilterSubjects: filters,
 	}
 	if len(filters) == 1 {
@@ -123,7 +125,7 @@ func (c *consumer) deadLetter(ctx context.Context, m jetstream.Msg, attempt int,
 	msg.Header.Set("X-Original-Subject", m.Subject())
 	msg.Header.Set("X-Delivery-Count", strconv.Itoa(attempt))
 	if _, err := c.js.PublishMsg(ctx, msg); err != nil {
-		c.log.Error("publish to DLQ failed, will retry", "error", err, "subject", m.Subject())
+		c.log.Error("publish to DLQ failed, will retry", "error", err, "subject", m.Subject(), "attempt", attempt)
 		_ = m.NakWithDelay(c.spec.NakDelays[min(attempt-1, len(c.spec.NakDelays)-1)])
 		return
 	}

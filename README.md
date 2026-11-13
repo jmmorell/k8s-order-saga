@@ -99,8 +99,9 @@ Before day 2 starts, the author checks that they own this part:
 
 - [ ] Fresh clone, `make up`, `make smoke` → `SMOKE OK`
 - [ ] Follow one order through the logs of the 4 services by `order_id`:
-  `docker compose logs --no-log-prefix orders inventory payments notifications | grep <order_id> | sort`
-  (the id is in the `POST /orders` response; `make smoke` prints it). You should see, in order:
+  `ORDER_ID=...` (the id is in the `POST /orders` response; `make smoke` prints it), then
+  `docker compose logs --no-log-prefix orders inventory payments notifications | grep "$ORDER_ID" | sort`.
+  You should see, in order:
   1. `order created` (orders)
   2. `stock reserved` (inventory)
   3. `payment succeeded` (payments)

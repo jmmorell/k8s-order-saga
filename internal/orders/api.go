@@ -133,6 +133,7 @@ func (s *Service) create(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, "publish orders.created", err)
 		return
 	}
+	s.log.Info("order created", "order_id", id.String(), "items", len(req.Items))
 	writeJSON(w, http.StatusAccepted, map[string]any{"id": id, "status": StatusPending})
 }
 

@@ -52,7 +52,10 @@ func (s *Service) HandleOrderCreated(ctx context.Context, e events.Envelope) err
 		}
 	}
 
-	var r reservation
+	var (
+		r       reservation
+		created bool // this call stored the reservation
+	)
 	err := pgutil.InTx(ctx, s.pool, func(tx pgx.Tx) error {
 		stored, found, err := getReservation(ctx, tx, e.OrderID)
 		if err != nil {
@@ -65,7 +68,11 @@ func (s *Service) HandleOrderCreated(ctx context.Context, e events.Envelope) err
 		if r, err = reserve(ctx, tx, e.OrderID, p.Items); err != nil {
 			return err
 		}
-		return insertReservation(ctx, tx, r)
+		if err := insertReservation(ctx, tx, r); err != nil {
+			return err
+		}
+		created = true
+		return nil
 	})
 	if err != nil {
 		return err
@@ -73,9 +80,23 @@ func (s *Service) HandleOrderCreated(ctx context.Context, e events.Envelope) err
 
 	switch r.Status {
 	case statusReserved:
-		return s.publish(ctx, events.InventoryReserved, e, events.InventoryReservedPayload{Items: r.Items, AmountCents: r.AmountCents})
+		if err := s.publish(ctx, events.InventoryReserved, e, events.InventoryReservedPayload{Items: r.Items, AmountCents: r.AmountCents}); err != nil {
+			return err
+		}
+		if created {
+			s.log.Info("stock reserved", "order_id", e.OrderID.String(), "amount_cents", r.AmountCents)
+		} else {
+			s.logRepublished(e, events.InventoryReserved)
+		}
 	case statusRejected:
-		return s.publish(ctx, events.InventoryRejected, e, events.InventoryRejectedPayload{Reason: r.Reason, SKU: r.SKU})
+		if err := s.publish(ctx, events.InventoryRejected, e, events.InventoryRejectedPayload{Reason: r.Reason, SKU: r.SKU}); err != nil {
+			return err
+		}
+		if created {
+			s.log.Info("stock rejected", "order_id", e.OrderID.String(), "reason", r.Reason, "sku", r.SKU)
+		} else {
+			s.logRepublished(e, events.InventoryRejected)
+		}
 	}
 	return nil // RELEASED: the order was already compensated, nothing to announce
 }
@@ -83,7 +104,10 @@ func (s *Service) HandleOrderCreated(ctx context.Context, e events.Envelope) err
 // HandlePaymentFailed releases the stock reserved for the order and publishes
 // inventory.released. Releasing twice is a no-op that publishes the event again.
 func (s *Service) HandlePaymentFailed(ctx context.Context, e events.Envelope) error {
-	var status string
+	var (
+		status   string
+		released bool // this call moved the reservation to RELEASED
+	)
 	err := pgutil.InTx(ctx, s.pool, func(tx pgx.Tx) error {
 		r, found, err := getReservation(ctx, tx, e.OrderID)
 		if err != nil {
@@ -100,15 +124,30 @@ func (s *Service) HandlePaymentFailed(ctx context.Context, e events.Envelope) er
 			return err
 		}
 		status = statusReleased
-		return setStatus(ctx, tx, e.OrderID, statusReleased)
+		if err := setStatus(ctx, tx, e.OrderID, statusReleased); err != nil {
+			return err
+		}
+		released = true
+		return nil
 	})
 	if err != nil {
 		return err
 	}
 	if status == statusReleased {
-		return s.publish(ctx, events.InventoryReleased, e, events.InventoryReleasedPayload{})
+		if err := s.publish(ctx, events.InventoryReleased, e, events.InventoryReleasedPayload{}); err != nil {
+			return err
+		}
+		if released {
+			s.log.Info("stock released", "order_id", e.OrderID.String())
+		} else {
+			s.logRepublished(e, events.InventoryReleased)
+		}
 	}
 	return nil
+}
+
+func (s *Service) logRepublished(e events.Envelope, subject events.Subject) {
+	s.log.Debug("re-published stored outcome", "order_id", e.OrderID.String(), "subject", string(subject))
 }
 
 // Restock resets every product's stock to its restock_to level.

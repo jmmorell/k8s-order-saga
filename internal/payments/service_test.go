@@ -1,9 +1,11 @@
 package payments_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/jmmorell/k8s-order-saga/internal/platform/logx"
 	"log/slog"
 	"testing"
 	"time"
@@ -172,4 +174,72 @@ func TestReserved_LatencyHonoursContext(t *testing.T) {
 	err := svc.HandleInventoryReserved(ctx, reserved(t, uuid.New(), 2000))
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 	require.Equal(t, 0, e.paymentCount(t))
+}
+
+// logLines parses the JSON lines written by a logx logger.
+func logLines(t *testing.T, buf *bytes.Buffer) []map[string]any {
+	t.Helper()
+	var out []map[string]any
+	for _, l := range bytes.Split(bytes.TrimSpace(buf.Bytes()), []byte("\n")) {
+		if len(l) == 0 {
+			continue
+		}
+		var m map[string]any
+		require.NoError(t, json.Unmarshal(l, &m))
+		out = append(out, m)
+	}
+	return out
+}
+
+// linesWith returns the lines with the given msg.
+func linesWith(lines []map[string]any, msg string) []map[string]any {
+	var out []map[string]any
+	for _, l := range lines {
+		if l["msg"] == msg {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+func TestLogs_TransitionsAtInfoRedeliveryAtDebug(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+
+	var okBuf bytes.Buffer
+	ok := payments.NewService(e.pool, e.js, payments.Config{}, logx.NewWithWriter(&okBuf, "payments", "debug"))
+	oid := uuid.New()
+	in := reserved(t, oid, 2000)
+	require.NoError(t, ok.HandleInventoryReserved(ctx, in))
+	succ := linesWith(logLines(t, &okBuf), "payment succeeded")
+	require.Len(t, succ, 1)
+	require.Equal(t, "INFO", succ[0]["level"])
+	require.Equal(t, oid.String(), succ[0]["order_id"])
+	require.EqualValues(t, 2000, succ[0]["amount_cents"])
+	require.NotEmpty(t, succ[0]["payment_id"])
+
+	require.NoError(t, ok.HandleInventoryReserved(ctx, in))
+	all := logLines(t, &okBuf)
+	require.Len(t, linesWith(all, "payment succeeded"), 1)
+	re := linesWith(all, "re-published stored outcome")
+	require.Len(t, re, 1)
+	require.Equal(t, "DEBUG", re[0]["level"])
+	require.Equal(t, oid.String(), re[0]["order_id"])
+	require.Equal(t, string(events.PaymentSucceeded), re[0]["subject"])
+
+	var failBuf bytes.Buffer
+	bad := payments.NewService(e.pool, e.js, payments.Config{FailureRate: 1}, logx.NewWithWriter(&failBuf, "payments", "debug"))
+	fid := uuid.New()
+	fin := reserved(t, fid, 500)
+	require.NoError(t, bad.HandleInventoryReserved(ctx, fin))
+	failed := linesWith(logLines(t, &failBuf), "payment failed")
+	require.Len(t, failed, 1)
+	require.Equal(t, "INFO", failed[0]["level"])
+	require.Equal(t, fid.String(), failed[0]["order_id"])
+	require.Equal(t, events.ReasonDeclined, failed[0]["reason"])
+
+	require.NoError(t, bad.HandleInventoryReserved(ctx, fin))
+	all = logLines(t, &failBuf)
+	require.Len(t, linesWith(all, "payment failed"), 1)
+	require.Len(t, linesWith(all, "re-published stored outcome"), 1)
 }

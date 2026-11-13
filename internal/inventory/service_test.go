@@ -1,9 +1,11 @@
 package inventory_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/jmmorell/k8s-order-saga/internal/platform/logx"
 	"log/slog"
 	"sync"
 	"testing"
@@ -278,4 +280,76 @@ func TestRun_StopsWhenContextEnds(t *testing.T) {
 	case <-time.After(15 * time.Second):
 		t.Fatal("Run did not return after the context ended")
 	}
+}
+
+// logLines parses the JSON lines written by a logx logger.
+func logLines(t *testing.T, buf *bytes.Buffer) []map[string]any {
+	t.Helper()
+	var out []map[string]any
+	for _, l := range bytes.Split(bytes.TrimSpace(buf.Bytes()), []byte("\n")) {
+		if len(l) == 0 {
+			continue
+		}
+		var m map[string]any
+		require.NoError(t, json.Unmarshal(l, &m))
+		out = append(out, m)
+	}
+	return out
+}
+
+// linesWith returns the lines with the given msg.
+func linesWith(lines []map[string]any, msg string) []map[string]any {
+	var out []map[string]any
+	for _, l := range lines {
+		if l["msg"] == msg {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+func TestLogs_TransitionsAtInfoRedeliveryAtDebug(t *testing.T) {
+	e := setup(t)
+	var buf bytes.Buffer
+	svc := inventory.NewService(e.pool, e.js, logx.NewWithWriter(&buf, "inventory", "debug"))
+	oid := uuid.New()
+	ctx := context.Background()
+	in := orderCreated(t, oid, events.Item{SKU: "SKU-001", Qty: 2})
+
+	require.NoError(t, svc.HandleOrderCreated(ctx, in))
+	reserved := linesWith(logLines(t, &buf), "stock reserved")
+	require.Len(t, reserved, 1)
+	require.Equal(t, "INFO", reserved[0]["level"])
+	require.Equal(t, oid.String(), reserved[0]["order_id"])
+	require.EqualValues(t, 1000, reserved[0]["amount_cents"])
+
+	require.NoError(t, svc.HandleOrderCreated(ctx, in))
+	all := logLines(t, &buf)
+	require.Len(t, linesWith(all, "stock reserved"), 1)
+	re := linesWith(all, "re-published stored outcome")
+	require.Len(t, re, 1)
+	require.Equal(t, "DEBUG", re[0]["level"])
+	require.Equal(t, oid.String(), re[0]["order_id"])
+	require.Equal(t, string(events.InventoryReserved), re[0]["subject"])
+
+	require.NoError(t, svc.HandlePaymentFailed(ctx, paymentFailed(t, oid)))
+	released := linesWith(logLines(t, &buf), "stock released")
+	require.Len(t, released, 1)
+	require.Equal(t, "INFO", released[0]["level"])
+	require.Equal(t, oid.String(), released[0]["order_id"])
+
+	require.NoError(t, svc.HandlePaymentFailed(ctx, paymentFailed(t, oid)))
+	all = logLines(t, &buf)
+	require.Len(t, linesWith(all, "stock released"), 1)
+	require.Len(t, linesWith(all, "re-published stored outcome"), 2)
+
+	rej := uuid.New()
+	bad := orderCreated(t, rej, events.Item{SKU: "NOPE", Qty: 1})
+	require.NoError(t, svc.HandleOrderCreated(ctx, bad))
+	rejected := linesWith(logLines(t, &buf), "stock rejected")
+	require.Len(t, rejected, 1)
+	require.Equal(t, "INFO", rejected[0]["level"])
+	require.Equal(t, rej.String(), rejected[0]["order_id"])
+	require.Equal(t, "NOPE", rejected[0]["sku"])
+	require.NotEmpty(t, rejected[0]["reason"])
 }

@@ -100,15 +100,20 @@ func (s *Service) HandleInventoryReserved(ctx context.Context, e events.Envelope
 		status, reason = statusFailed, events.ReasonDeclined
 	}
 
-	var p payment
+	var (
+		p       payment
+		created bool // this call stored the payment
+	)
 	err := pgutil.InTx(ctx, s.pool, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx,
+		tag, err := tx.Exec(ctx,
 			`INSERT INTO payments (id, order_id, amount_cents, status, reason)
 			 VALUES ($1, $2, $3, $4, NULLIF($5, ''))
 			 ON CONFLICT (order_id) DO NOTHING`,
-			uuid.New(), e.OrderID, in.AmountCents, status, reason); err != nil {
+			uuid.New(), e.OrderID, in.AmountCents, status, reason)
+		if err != nil {
 			return fmt.Errorf("insert payment: %w", err)
 		}
+		created = tag.RowsAffected() == 1
 		if err := tx.QueryRow(ctx,
 			`SELECT id, amount_cents, status FROM payments WHERE order_id = $1`, e.OrderID).
 			Scan(&p.ID, &p.AmountCents, &p.Status); err != nil {
@@ -121,10 +126,31 @@ func (s *Service) HandleInventoryReserved(ctx context.Context, e events.Envelope
 	}
 
 	if p.Status == statusSucceeded {
-		return s.publish(ctx, events.PaymentSucceeded, e,
-			events.PaymentSucceededPayload{PaymentID: p.ID, AmountCents: p.AmountCents})
+		if err := s.publish(ctx, events.PaymentSucceeded, e,
+			events.PaymentSucceededPayload{PaymentID: p.ID, AmountCents: p.AmountCents}); err != nil {
+			return err
+		}
+		if created {
+			s.log.Info("payment succeeded", "order_id", e.OrderID.String(),
+				"payment_id", p.ID.String(), "amount_cents", p.AmountCents)
+		} else {
+			s.logRepublished(e, events.PaymentSucceeded)
+		}
+		return nil
 	}
-	return s.publish(ctx, events.PaymentFailed, e, events.PaymentFailedPayload{Reason: events.ReasonDeclined})
+	if err := s.publish(ctx, events.PaymentFailed, e, events.PaymentFailedPayload{Reason: events.ReasonDeclined}); err != nil {
+		return err
+	}
+	if created {
+		s.log.Info("payment failed", "order_id", e.OrderID.String(), "reason", events.ReasonDeclined)
+	} else {
+		s.logRepublished(e, events.PaymentFailed)
+	}
+	return nil
+}
+
+func (s *Service) logRepublished(e events.Envelope, subject events.Subject) {
+	s.log.Debug("re-published stored outcome", "order_id", e.OrderID.String(), "subject", string(subject))
 }
 
 func (s *Service) publish(ctx context.Context, subject events.Subject, cause events.Envelope, payload any) error {

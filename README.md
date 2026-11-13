@@ -98,7 +98,16 @@ duplicate email.
 Before day 2 starts, the author checks that they own this part:
 
 - [ ] Fresh clone, `make up`, `make smoke` → `SMOKE OK`
-- [ ] Follow one order through the logs of the 4 services by `order_id`
+- [ ] Follow one order through the logs of the 4 services by `order_id`:
+  `docker compose logs orders inventory payments notifications | grep <order_id>`
+  (the id is in the `POST /orders` response; `make smoke` prints it). You should see, in order:
+  1. `order created` (orders)
+  2. `stock reserved` (inventory)
+  3. `payment succeeded` (payments)
+  4. `order confirmed` (orders)
+  5. `email sent` (notifications)
+
+  Redeliveries show up at debug level only, as `re-published stored outcome`.
 - [ ] Explain in own words: choreography, at-least-once + idempotency, deterministic event IDs, DLQ, the missing outbox
 - [ ] `docker compose stop nats`, POST an order → 503; start NATS → the next order completes
 - [ ] Read the 4 ADRs and be able to defend them

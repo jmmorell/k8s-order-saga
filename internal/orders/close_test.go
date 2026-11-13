@@ -1,9 +1,13 @@
 package orders_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/jmmorell/k8s-order-saga/internal/orders"
+	"github.com/jmmorell/k8s-order-saga/internal/platform/logx"
+	"net/http"
 	"testing"
 
 	"github.com/google/uuid"
@@ -127,4 +131,69 @@ func TestResult_UnknownOrderIsPermanent(t *testing.T) {
 		mustEnv(t, events.PaymentFailed, uuid.New(), events.PaymentFailedPayload{Reason: events.ReasonDeclined}))
 	require.Error(t, err)
 	require.True(t, errors.Is(err, events.ErrPermanent))
+}
+
+// logLines parses the JSON lines written by a logx logger.
+func logLines(t *testing.T, buf *bytes.Buffer) []map[string]any {
+	t.Helper()
+	var out []map[string]any
+	for _, l := range bytes.Split(bytes.TrimSpace(buf.Bytes()), []byte("\n")) {
+		if len(l) == 0 {
+			continue
+		}
+		var m map[string]any
+		require.NoError(t, json.Unmarshal(l, &m))
+		out = append(out, m)
+	}
+	return out
+}
+
+// linesWith returns the lines with the given msg.
+func linesWith(lines []map[string]any, msg string) []map[string]any {
+	var out []map[string]any
+	for _, l := range lines {
+		if l["msg"] == msg {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+func TestLogs_TransitionsAtInfoRedeliveryAtDebug(t *testing.T) {
+	e := setup(t)
+	var buf bytes.Buffer
+	svc := orders.NewService(e.pool, e.js, logx.NewWithWriter(&buf, "orders", "debug"))
+
+	rec := post(svc.Routes(), validBody)
+	require.Equal(t, http.StatusAccepted, rec.Code)
+	var created struct {
+		ID uuid.UUID `json:"id"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &created))
+	id := created.ID.String()
+
+	lines := linesWith(logLines(t, &buf), "order created")
+	require.Len(t, lines, 1)
+	require.Equal(t, "INFO", lines[0]["level"])
+	require.Equal(t, id, lines[0]["order_id"])
+	require.EqualValues(t, 1, lines[0]["items"])
+
+	env := mustEnv(t, events.PaymentSucceeded, created.ID, events.PaymentSucceededPayload{PaymentID: uuid.New(), AmountCents: 2000})
+	require.NoError(t, svc.HandleResult(context.Background(), env))
+	all := logLines(t, &buf)
+	confirmed := linesWith(all, "order confirmed")
+	require.Len(t, confirmed, 1)
+	require.Equal(t, "INFO", confirmed[0]["level"])
+	require.Equal(t, id, confirmed[0]["order_id"])
+	require.EqualValues(t, 2000, confirmed[0]["amount_cents"])
+	require.Empty(t, linesWith(all, "re-published stored outcome"))
+
+	require.NoError(t, svc.HandleResult(context.Background(), env))
+	all = logLines(t, &buf)
+	require.Len(t, linesWith(all, "order confirmed"), 1)
+	re := linesWith(all, "re-published stored outcome")
+	require.Len(t, re, 1)
+	require.Equal(t, "DEBUG", re[0]["level"])
+	require.Equal(t, id, re[0]["order_id"])
+	require.Equal(t, string(events.OrderConfirmed), re[0]["subject"])
 }

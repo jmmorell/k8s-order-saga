@@ -20,6 +20,7 @@ func (s *Service) HandleResult(ctx context.Context, e events.Envelope) error {
 		reason string
 		email  string
 		amount *int64
+		closed bool // this call moved the order out of PENDING
 	)
 	err := pgutil.InTx(ctx, s.pool, func(tx pgx.Tx) error {
 		var stored *string
@@ -62,6 +63,7 @@ func (s *Service) HandleResult(ctx context.Context, e events.Envelope) error {
 			e.OrderID, status, reason, amount); err != nil {
 			return fmt.Errorf("update order: %w", err)
 		}
+		closed = true
 		return nil
 	})
 	if err != nil {
@@ -70,13 +72,31 @@ func (s *Service) HandleResult(ctx context.Context, e events.Envelope) error {
 
 	switch status {
 	case StatusConfirmed:
-		return s.publish(ctx, events.OrderConfirmed, e,
-			events.OrderConfirmedPayload{CustomerEmail: email, AmountCents: *amount})
+		if err := s.publish(ctx, events.OrderConfirmed, e,
+			events.OrderConfirmedPayload{CustomerEmail: email, AmountCents: *amount}); err != nil {
+			return err
+		}
+		if closed {
+			s.log.Info("order confirmed", "order_id", e.OrderID.String(), "amount_cents", *amount)
+		} else {
+			s.logRepublished(e, events.OrderConfirmed)
+		}
 	case StatusCancelled:
-		return s.publish(ctx, events.OrderCancelled, e,
-			events.OrderCancelledPayload{CustomerEmail: email, Reason: reason})
+		if err := s.publish(ctx, events.OrderCancelled, e,
+			events.OrderCancelledPayload{CustomerEmail: email, Reason: reason}); err != nil {
+			return err
+		}
+		if closed {
+			s.log.Info("order cancelled", "order_id", e.OrderID.String(), "reason", reason)
+		} else {
+			s.logRepublished(e, events.OrderCancelled)
+		}
 	}
 	return nil
+}
+
+func (s *Service) logRepublished(e events.Envelope, subject events.Subject) {
+	s.log.Debug("re-published stored outcome", "order_id", e.OrderID.String(), "subject", string(subject))
 }
 
 func (s *Service) publish(ctx context.Context, subject events.Subject, cause events.Envelope, payload any) error {

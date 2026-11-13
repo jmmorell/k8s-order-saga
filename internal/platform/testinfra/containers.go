@@ -92,7 +92,10 @@ func Postgres(t *testing.T, dbs ...string) map[string]string {
 func Mailpit(t *testing.T) (smtpAddr, apiURL string) {
 	t.Helper()
 	c, host := start(t, testcontainers.ContainerRequest{
-		Image:        "axllent/mailpit",
+		Image: "axllent/mailpit",
+		// Without this Mailpit does a reverse DNS lookup of every SMTP client
+		// before its greeting, which can stall each connection for 10 s.
+		Env:          map[string]string{"MP_SMTP_DISABLE_RDNS": "true"},
 		ExposedPorts: []string{"1025/tcp", "8025/tcp"},
 		WaitingFor:   wait.ForHTTP("/api/v1/info").WithPort("8025/tcp").WithStartupTimeout(startTimeout),
 	})

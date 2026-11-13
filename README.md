@@ -99,13 +99,15 @@ Before day 2 starts, the author checks that they own this part:
 
 - [ ] Fresh clone, `make up`, `make smoke` → `SMOKE OK`
 - [ ] Follow one order through the logs of the 4 services by `order_id`:
-  `docker compose logs orders inventory payments notifications | grep <order_id>`
+  `docker compose logs --no-log-prefix orders inventory payments notifications | grep <order_id> | sort`
   (the id is in the `POST /orders` response; `make smoke` prints it). You should see, in order:
   1. `order created` (orders)
   2. `stock reserved` (inventory)
   3. `payment succeeded` (payments)
   4. `order confirmed` (orders)
   5. `email sent` (notifications)
+
+  Every line starts with its timestamp, so `sort` makes the output chronological; lines a few milliseconds apart may swap, because `order created` is logged after the publish and a fast consumer can log first.
 
   Redeliveries show up at debug level only, as `re-published stored outcome`.
 - [ ] Explain in own words: choreography, at-least-once + idempotency, deterministic event IDs, DLQ, the missing outbox

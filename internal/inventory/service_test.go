@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/jmmorell/k8s-order-saga/internal/platform/logx"
 	"log/slog"
 	"sync"
 	"testing"
@@ -18,6 +17,7 @@ import (
 
 	"github.com/jmmorell/k8s-order-saga/internal/inventory"
 	"github.com/jmmorell/k8s-order-saga/internal/platform/events"
+	"github.com/jmmorell/k8s-order-saga/internal/platform/logx"
 	"github.com/jmmorell/k8s-order-saga/internal/platform/pgutil"
 	"github.com/jmmorell/k8s-order-saga/internal/platform/testinfra"
 )

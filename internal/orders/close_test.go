@@ -5,15 +5,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/jmmorell/k8s-order-saga/internal/orders"
-	"github.com/jmmorell/k8s-order-saga/internal/platform/logx"
 	"net/http"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jmmorell/k8s-order-saga/internal/orders"
 	"github.com/jmmorell/k8s-order-saga/internal/platform/events"
+	"github.com/jmmorell/k8s-order-saga/internal/platform/logx"
 )
 
 func (e env) pending(t *testing.T) uuid.UUID {

@@ -13,6 +13,7 @@ Minor findings the task and final reviews raised and deliberately left open. Non
 - DLQ publishes carry no `Nats-Msg-Id`, so a failed `Term` after a successful DLQ publish duplicates the DLQ entry.
 - `Connect` takes no context: a SIGTERM during its 30 s start-up wait is not honoured.
 - Test tidiness in `consume_test.go`.
+- Saga logging: if a commit succeeds but the publish fails, the redelivery only logs DEBUG `re-published stored outcome`, so that transition never gets an INFO line.
 
 ## Health (`internal/platform/httpx`)
 - `/readyz` discards the failing check's error (not logged, not in the body).

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -16,9 +17,10 @@ import (
 )
 
 const (
-	maxBodyBytes = 64 << 10
-	maxItems     = 20
-	maxQty       = 100
+	maxBodyBytes   = 64 << 10
+	maxItems       = 20
+	maxQty         = 100
+	publishTimeout = 5 * time.Second
 )
 
 // CreateOrderRequest is the body of POST /orders.
@@ -32,6 +34,9 @@ func Validate(r CreateOrderRequest) error {
 	if !strings.Contains(r.CustomerEmail, "@") {
 		return errors.New("customer_email must contain @")
 	}
+	if strings.ContainsRune(r.CustomerEmail, 0) {
+		return errors.New("customer_email must not contain NUL")
+	}
 	if len(r.Items) < 1 || len(r.Items) > maxItems {
 		return fmt.Errorf("items must have between 1 and %d entries", maxItems)
 	}
@@ -39,6 +44,9 @@ func Validate(r CreateOrderRequest) error {
 	for _, it := range r.Items {
 		if it.SKU == "" {
 			return errors.New("item sku must not be empty")
+		}
+		if strings.ContainsRune(it.SKU, 0) {
+			return errors.New("item sku must not contain NUL")
 		}
 		if it.Qty < 1 || it.Qty > maxQty {
 			return fmt.Errorf("item qty must be between 1 and %d", maxQty)
@@ -111,7 +119,11 @@ func (s *Service) create(w http.ResponseWriter, r *http.Request) {
 	out, err := events.New(events.OrderCreated, id,
 		events.OrderCreatedPayload{CustomerEmail: req.CustomerEmail, Items: req.Items})
 	if err == nil {
-		err = events.Publish(r.Context(), s.js, out)
+		// Detached from the client: a disconnect mid-publish must not leave us unsure
+		// whether the broker accepted the event before we delete the order.
+		pubCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), publishTimeout)
+		defer cancel()
+		err = events.Publish(pubCtx, s.js, out)
 	}
 	if err != nil {
 		// Without the event the saga never starts: do not leave a PENDING order behind.

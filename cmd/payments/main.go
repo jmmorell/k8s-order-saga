@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -16,13 +17,13 @@ import (
 
 func main() {
 	log := logx.New("payments", config.String("LOG_LEVEL", "info"))
-	if err := run(); err != nil {
+	if err := run(log); err != nil {
 		log.Error("payments stopped", "error", err)
 		os.Exit(1)
 	}
 }
 
-func run() error {
+func run(log *slog.Logger) error {
 	dbURL, err := config.Required("DATABASE_URL")
 	if err != nil {
 		return err
@@ -52,7 +53,6 @@ func run() error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	log := logx.New("payments", config.String("LOG_LEVEL", "info"))
 	if err := payments.Run(ctx, cfg, log); err != nil {
 		return fmt.Errorf("run: %w", err)
 	}

@@ -46,6 +46,29 @@ func TestMigrate_TwiceIsNoop(t *testing.T) {
 	require.Equal(t, 1, n)
 }
 
+func TestMigrate_ConcurrentCallersAllSucceed(t *testing.T) {
+	if testing.Short() {
+		t.Skip("integration test")
+	}
+	ctx := context.Background()
+	url := testinfra.Postgres(t, "app")["app"]
+	sub, err := fsSub()
+	require.NoError(t, err)
+
+	// Each caller has its own pool, like separate replicas of a service.
+	const callers = 8
+	errs := make(chan error, callers)
+	for range callers {
+		pool, err := pgutil.Connect(ctx, url)
+		require.NoError(t, err)
+		t.Cleanup(pool.Close)
+		go func() { errs <- pgutil.Migrate(ctx, pool, sub) }()
+	}
+	for range callers {
+		require.NoError(t, <-errs)
+	}
+}
+
 func TestInTx_CommitsOnNilRollsBackOnError(t *testing.T) {
 	if testing.Short() {
 		t.Skip("integration test")

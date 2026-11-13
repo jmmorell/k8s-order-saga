@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
+	"github.com/pressly/goose/v3/lock"
 )
 
 const retryInterval = time.Second
@@ -43,7 +44,13 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool, migrations fs.FS) error {
 	db := stdlib.OpenDBFromPool(pool)
 	defer func() { _ = db.Close() }()
 
-	provider, err := goose.NewProvider(goose.DialectPostgres, db, migrations)
+	// An advisory lock makes several replicas migrating at once safe.
+	locker, err := lock.NewPostgresSessionLocker()
+	if err != nil {
+		return fmt.Errorf("create migration locker: %w", err)
+	}
+	provider, err := goose.NewProvider(goose.DialectPostgres, db, migrations,
+		goose.WithSessionLocker(locker))
 	if err != nil {
 		return fmt.Errorf("create migration provider: %w", err)
 	}

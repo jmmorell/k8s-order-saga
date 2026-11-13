@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -77,6 +78,8 @@ func TestCreate_InvalidInputReturns400AndStoresNothing(t *testing.T) {
 		"qty zero":       `{"customer_email":"a@b.c","items":[{"sku":"SKU-001","qty":0}]}`,
 		"qty too big":    `{"customer_email":"a@b.c","items":[{"sku":"SKU-001","qty":101}]}`,
 		"dup sku":        `{"customer_email":"a@b.c","items":[{"sku":"SKU-001","qty":1},{"sku":"SKU-001","qty":2}]}`,
+		"nul in email":   `{"customer_email":"a@b.c\u0000","items":[{"sku":"SKU-001","qty":1}]}`,
+		"nul in sku":     `{"customer_email":"a@b.c","items":[{"sku":"SKU\u0000-1","qty":1}]}`,
 		"bad email":      `{"customer_email":"nope","items":[{"sku":"SKU-001","qty":1}]}`,
 		"body too large": `{"customer_email":"a@b.c","items":[{"sku":"` + strings.Repeat("x", 70_000) + `","qty":1}]}`,
 	}
@@ -143,6 +146,34 @@ func TestCreate_NATSDownReturns503AndRemovesOrder(t *testing.T) {
 	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
 	require.JSONEq(t, `{"error":"temporarily unavailable"}`, rec.Body.String())
 	require.Equal(t, 0, e.orderCount(t))
+}
+
+func TestCreate_NATSDisconnectedReturns503AndNothingIsPublishedAfterReconnect(t *testing.T) {
+	e := setup(t)
+	url, proxy := testinfra.NATSBehindProxy(t)
+	nc, js, err := events.Connect(url, "disconnected")
+	require.NoError(t, err)
+	t.Cleanup(nc.Close)
+	require.NoError(t, events.EnsureStreams(context.Background(), js))
+	svc := orders.NewService(e.pool, js, slog.New(slog.DiscardHandler))
+
+	proxy.Down()
+	require.Eventually(t, func() bool { return !nc.IsConnected() }, 10*time.Second, 50*time.Millisecond)
+
+	rec := post(svc.Routes(), validBody)
+	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
+	require.Equal(t, 0, e.orderCount(t))
+
+	proxy.Up()
+	require.Eventually(t, nc.IsConnected, 30*time.Second, 100*time.Millisecond)
+	require.Never(t, func() bool {
+		s, err := js.Stream(context.Background(), "ORDERS")
+		if err != nil {
+			return true
+		}
+		info, err := s.Info(context.Background())
+		return err != nil || info.State.Msgs != 0
+	}, 3*time.Second, 200*time.Millisecond)
 }
 
 func TestGet_UnknownIs404_BadIDIs400(t *testing.T) {

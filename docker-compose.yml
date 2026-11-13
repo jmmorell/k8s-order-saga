@@ -22,7 +22,7 @@ services:
     image: nats:2.11-alpine
     command: ["-js", "-sd", "/data", "-m", "8222"]
     ports:
-      - "8222:8222"
+      - "127.0.0.1:8222:8222"
     volumes:
       - natsdata:/data
     healthcheck:
@@ -32,12 +32,12 @@ services:
       retries: 30
 
   mailpit:
-    image: axllent/mailpit
+    image: axllent/mailpit:v1.33.1
     environment:
       # Without this Mailpit stalls each SMTP greeting ~10 s on a reverse DNS lookup.
       MP_SMTP_DISABLE_RDNS: "true"
     ports:
-      - "8025:8025"
+      - "127.0.0.1:8025:8025"
 
   orders:
     <<: *service
@@ -49,7 +49,7 @@ services:
       DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/orders?sslmode=disable
       NATS_URL: nats://nats:4222
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     depends_on:
       postgres: {condition: service_healthy}
       nats: {condition: service_healthy}

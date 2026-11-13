@@ -89,6 +89,7 @@ duplicate email.
 ## Known limitations
 
 - **No outbox.** If `orders` crashes between committing an order and publishing `orders.created`, the order stays `PENDING` with no event. See ADR 0003.
+- **A publish that times out can still have been accepted.** If `orders` deletes the order after a timeout on `orders.created` but the broker had already stored the event, the order is missing for the client while the saga continues: the result lands in `dlq.orders.*` and the stock stays reserved until the next restock. The outbox (iteration 2) removes this. See ADR 0003.
 - **Duplicate emails are possible**, as described above.
 - **Stopping a consumer does not wait for an in-flight handler.** A message being handled during shutdown is redelivered later, which idempotent handlers tolerate.
 

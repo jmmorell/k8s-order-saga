@@ -26,4 +26,5 @@ A handler changes its own database and then tells the other services by publishi
 
 - The gap is repaired by redelivery, not prevented: after a crash between commit and publish, the retried message re-publishes the stored outcome.
 - If the redelivery arrives after the duplicate window, a consumer may see a duplicate. Consumers are idempotent for the same reason, so this is harmless.
+- A publish from `POST /orders` that times out after the broker accepted the message still deletes the order row while the saga continues: the order is missing for the client, the result lands in `dlq.orders.*`, and the stock stays reserved until the next restock. The outbox removes this too.
 - Outbox is the planned fix for iteration 2 if the gap must be closed instead of repaired.

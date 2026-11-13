@@ -27,11 +27,10 @@ order_has_status() { # id status
   curl -fsS "$ORDERS/orders/$1" | grep -q "\"status\":\"$2\""
 }
 
-mail_count() {
-  curl -fsS "$MAILPIT/api/v1/messages" | sed -E 's/.*"total":([0-9]+).*/\1/'
+mail_with_subject() { # subject -> succeeds when Mailpit holds a message with exactly that subject
+  curl -fsS -G "$MAILPIT/api/v1/search" --data-urlencode "query=subject:\"$1\"" |
+    grep -q "\"Subject\":\"$1\""
 }
-
-at_least_two_mails() { [ "$(mail_count)" -ge 2 ]; }
 
 wait_for "orders to be ready" curl -fsS "$ORDERS/readyz"
 
@@ -45,6 +44,7 @@ cancelled=$(place_order SKU-010)
 wait_for "order $cancelled to be CANCELLED" order_has_status "$cancelled" CANCELLED
 echo "order $cancelled CANCELLED"
 
-wait_for "at least 2 emails in Mailpit" at_least_two_mails
-echo "Mailpit has $(mail_count) messages"
+wait_for "the confirmation email of order $confirmed" mail_with_subject "Order $confirmed confirmed"
+wait_for "the cancellation email of order $cancelled" mail_with_subject "Order $cancelled cancelled (out_of_stock)"
+echo "Mailpit has both emails"
 echo "SMOKE OK"

@@ -6,7 +6,7 @@ Accepted
 
 ## Context
 
-An order flows through three services: orders creates it, inventory reserves stock, payments charges the customer, and notifications sends an email. Each service owns its database, so there is no distributed transaction. We need a broker with persistence, retries and a dead-letter path, and a way to coordinate the steps that is easy to explain.
+An order flows through four services: orders creates it, inventory reserves stock, payments charges the customer, and notifications sends an email. Each service owns its database, so there is no distributed transaction. We need a broker with persistence, retries and a dead-letter path, and a way to coordinate the steps that is easy to explain.
 
 ## Decision
 

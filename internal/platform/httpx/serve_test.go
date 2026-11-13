@@ -11,7 +11,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"k8s-portfolio/internal/platform/httpx"
+	"github.com/jmmorell/k8s-order-saga/internal/platform/httpx"
 )
 
 func TestServe_StopsCleanlyWhenContextEnds(t *testing.T) {

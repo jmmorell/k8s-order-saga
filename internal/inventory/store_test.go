@@ -7,7 +7,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	"k8s-portfolio/internal/platform/events"
+	"github.com/jmmorell/k8s-order-saga/internal/platform/events"
 )
 
 func TestSeed_ProductsAndPrices(t *testing.T) {

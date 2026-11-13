@@ -13,9 +13,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nats-io/nats.go/jetstream"
 
-	"k8s-portfolio/internal/platform/events"
-	"k8s-portfolio/internal/platform/httpx"
-	"k8s-portfolio/internal/platform/pgutil"
+	"github.com/jmmorell/k8s-order-saga/internal/platform/events"
+	"github.com/jmmorell/k8s-order-saga/internal/platform/httpx"
+	"github.com/jmmorell/k8s-order-saga/internal/platform/pgutil"
 )
 
 //go:embed migrations/*.sql

@@ -44,7 +44,7 @@ services:
     build:
       context: .
       args: {SERVICE: orders}
-    image: k8s-portfolio/orders:dev
+    image: k8s-order-saga/orders:dev
     environment:
       DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/orders?sslmode=disable
       NATS_URL: nats://nats:4222
@@ -59,7 +59,7 @@ services:
     build:
       context: .
       args: {SERVICE: inventory}
-    image: k8s-portfolio/inventory:dev
+    image: k8s-order-saga/inventory:dev
     environment:
       DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/inventory?sslmode=disable
       NATS_URL: nats://nats:4222
@@ -73,7 +73,7 @@ services:
     build:
       context: .
       args: {SERVICE: payments}
-    image: k8s-portfolio/payments:dev
+    image: k8s-order-saga/payments:dev
     environment:
       DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/payments?sslmode=disable
       NATS_URL: nats://nats:4222
@@ -88,7 +88,7 @@ services:
     build:
       context: .
       args: {SERVICE: notifications}
-    image: k8s-portfolio/notifications:dev
+    image: k8s-order-saga/notifications:dev
     environment:
       NATS_URL: nats://nats:4222
       SMTP_ADDR: mailpit:1025
@@ -101,7 +101,7 @@ services:
     build:
       context: .
       args: {SERVICE: loadgen}
-    image: k8s-portfolio/loadgen:dev
+    image: k8s-order-saga/loadgen:dev
     environment:
       TARGET_URL: http://orders:8080
       RATE_PER_SEC: ${RATE_PER_SEC:-2}

@@ -13,7 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"k8s-portfolio/internal/platform/events"
+	"github.com/jmmorell/k8s-order-saga/internal/platform/events"
 )
 
 const (

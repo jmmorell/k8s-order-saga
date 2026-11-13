@@ -14,8 +14,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"k8s-portfolio/internal/loadgen"
-	"k8s-portfolio/internal/orders"
+	"github.com/jmmorell/k8s-order-saga/internal/loadgen"
+	"github.com/jmmorell/k8s-order-saga/internal/orders"
 )
 
 func TestRandomOrder_AlwaysValid(t *testing.T) {

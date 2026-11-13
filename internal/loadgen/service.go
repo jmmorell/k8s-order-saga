@@ -16,7 +16,7 @@ import (
 	"sync"
 	"time"
 
-	"k8s-portfolio/internal/platform/httpx"
+	"github.com/jmmorell/k8s-order-saga/internal/platform/httpx"
 )
 
 const (

@@ -6,7 +6,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"k8s-portfolio/internal/platform/config"
+	"github.com/jmmorell/k8s-order-saga/internal/platform/config"
 )
 
 func TestInt_InvalidValueNamesVariable(t *testing.T) {

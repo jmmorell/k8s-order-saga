@@ -1,4 +1,4 @@
-module k8s-portfolio
+module github.com/jmmorell/k8s-order-saga
 
 go 1.27.4
 

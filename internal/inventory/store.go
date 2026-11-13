@@ -13,7 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"k8s-portfolio/internal/platform/events"
+	"github.com/jmmorell/k8s-order-saga/internal/platform/events"
 )
 
 //go:embed migrations/*.sql

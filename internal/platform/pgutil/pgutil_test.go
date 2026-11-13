@@ -11,8 +11,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/require"
 
-	"k8s-portfolio/internal/platform/pgutil"
-	"k8s-portfolio/internal/platform/testinfra"
+	"github.com/jmmorell/k8s-order-saga/internal/platform/pgutil"
+	"github.com/jmmorell/k8s-order-saga/internal/platform/testinfra"
 )
 
 //go:embed testdata/*.sql

@@ -8,7 +8,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"k8s-portfolio/internal/platform/logx"
+	"github.com/jmmorell/k8s-order-saga/internal/platform/logx"
 )
 
 func TestParseLevel(t *testing.T) {

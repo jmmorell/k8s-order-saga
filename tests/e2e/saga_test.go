@@ -19,12 +19,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 
-	"k8s-portfolio/internal/inventory"
-	"k8s-portfolio/internal/notifications"
-	"k8s-portfolio/internal/orders"
-	"k8s-portfolio/internal/payments"
-	"k8s-portfolio/internal/platform/pgutil"
-	"k8s-portfolio/internal/platform/testinfra"
+	"github.com/jmmorell/k8s-order-saga/internal/inventory"
+	"github.com/jmmorell/k8s-order-saga/internal/notifications"
+	"github.com/jmmorell/k8s-order-saga/internal/orders"
+	"github.com/jmmorell/k8s-order-saga/internal/payments"
+	"github.com/jmmorell/k8s-order-saga/internal/platform/pgutil"
+	"github.com/jmmorell/k8s-order-saga/internal/platform/testinfra"
 )
 
 const (

@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"math/rand/v2"
 
-	"k8s-portfolio/internal/orders"
-	"k8s-portfolio/internal/platform/events"
+	"github.com/jmmorell/k8s-order-saga/internal/orders"
+	"github.com/jmmorell/k8s-order-saga/internal/platform/events"
 )
 
 const (

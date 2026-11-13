@@ -1,4 +1,4 @@
-# k8s-portfolio
+# k8s-order-saga
 
 Five event-driven Go services (orders, inventory, payments, notifications, load generator) built as a choreography over NATS JetStream.
 
@@ -48,7 +48,7 @@ Products are `SKU-001` to `SKU-009` (stock 1000, restocked every minute) and `SK
 Each service can be built on its own, which is what the Kubernetes days will use:
 
 ```sh
-docker build --build-arg SERVICE=orders -t k8s-portfolio/orders:dev .
+docker build --build-arg SERVICE=orders -t k8s-order-saga/orders:dev .
 ```
 
 ### Inject failures

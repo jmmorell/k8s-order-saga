@@ -10,9 +10,9 @@ import (
 	"syscall"
 	"time"
 
-	"k8s-portfolio/internal/inventory"
-	"k8s-portfolio/internal/platform/config"
-	"k8s-portfolio/internal/platform/logx"
+	"github.com/jmmorell/k8s-order-saga/internal/inventory"
+	"github.com/jmmorell/k8s-order-saga/internal/platform/config"
+	"github.com/jmmorell/k8s-order-saga/internal/platform/logx"
 )
 
 func main() {

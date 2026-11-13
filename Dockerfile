@@ -1,4 +1,4 @@
-# Build any service: docker build --build-arg SERVICE=orders -t k8s-portfolio/orders:dev .
+# Build any service: docker build --build-arg SERVICE=orders -t k8s-order-saga/orders:dev .
 FROM golang:1.27 AS build
 ARG SERVICE
 WORKDIR /src

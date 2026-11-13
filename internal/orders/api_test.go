@@ -15,10 +15,10 @@ import (
 	"github.com/nats-io/nats.go/jetstream"
 	"github.com/stretchr/testify/require"
 
-	"k8s-portfolio/internal/orders"
-	"k8s-portfolio/internal/platform/events"
-	"k8s-portfolio/internal/platform/pgutil"
-	"k8s-portfolio/internal/platform/testinfra"
+	"github.com/jmmorell/k8s-order-saga/internal/orders"
+	"github.com/jmmorell/k8s-order-saga/internal/platform/events"
+	"github.com/jmmorell/k8s-order-saga/internal/platform/pgutil"
+	"github.com/jmmorell/k8s-order-saga/internal/platform/testinfra"
 )
 
 type env struct {

@@ -10,7 +10,7 @@ The project consists of five small services that share platform code: configurat
 
 ## Decision
 
-Keep all services in one repository and one Go module named `k8s-portfolio` at the repo root.
+Keep all services in one repository and one Go module named `github.com/jmmorell/k8s-order-saga` at the repo root.
 
 - `cmd/<service>` holds each service entry point.
 - `internal/platform/...` holds shared packages (config, logx, httpx, ...).

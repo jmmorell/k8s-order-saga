@@ -7,8 +7,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"k8s-portfolio/internal/platform/events"
-	"k8s-portfolio/internal/platform/pgutil"
+	"github.com/jmmorell/k8s-order-saga/internal/platform/events"
+	"github.com/jmmorell/k8s-order-saga/internal/platform/pgutil"
 )
 
 // HandleResult closes a pending order from an inventory or payment result,

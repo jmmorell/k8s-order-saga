@@ -1,11 +1,17 @@
 #!/usr/bin/env bash
 # Posts one order that must be confirmed and one that must be cancelled, then
-# checks that both outcomes reached Mailpit. Needs the Compose stack running.
+# checks that both outcomes reached Mailpit. Needs the Compose stack or the kind cluster running.
+#
+# Env: ORDERS_URL, MAILPIT_URL (targets).
+# Readiness of orders is strict by default: GET $ORDERS_URL$ORDERS_READY_PATH (default /readyz) must return 2xx.
+# ORDERS_READY_BODY (optional) switches to body matching: the wait passes only when the response body
+# contains that substring, whatever the status. The cluster gateway routes only /orders, so
+# scripts/local-smoke.sh probes an unknown order and matches orders' own JSON error.
 set -euo pipefail
 
 ORDERS=${ORDERS_URL:-http://localhost:8080}
-# Path used to tell that orders is up; any status below 500 counts (the cluster gateway routes only /orders).
 READY_PATH=${ORDERS_READY_PATH:-/readyz}
+READY_BODY=${ORDERS_READY_BODY:-}
 MAILPIT=${MAILPIT_URL:-http://localhost:8025}
 
 fail() { echo "SMOKE FAILED: $*" >&2; exit 1; }
@@ -35,9 +41,11 @@ mail_with_subject() { # subject -> succeeds when Mailpit holds a message with ex
 }
 
 orders_up() {
-  local code
-  code=$(curl -s -o /dev/null -w '%{http_code}' "$ORDERS$READY_PATH") || return 1
-  [ "$code" -ge 200 ] && [ "$code" -lt 500 ]
+  if [ -n "$READY_BODY" ]; then
+    curl -sS "$ORDERS$READY_PATH" | grep -qF -- "$READY_BODY"
+  else
+    curl -fsS "$ORDERS$READY_PATH"
+  fi
 }
 
 wait_for "orders to be ready" orders_up

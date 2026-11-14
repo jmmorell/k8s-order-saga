@@ -17,4 +17,5 @@ for _ in $(seq 1 50); do
   sleep 0.2
 done
 
-ORDERS_URL=http://localhost:8080 ORDERS_READY_PATH=/orders/00000000-0000-0000-0000-000000000000 MAILPIT_URL=http://localhost:18025 ./scripts/smoke.sh
+ORDERS_URL=http://localhost:8080 ORDERS_READY_PATH=/orders/00000000-0000-0000-0000-000000000000 \
+  ORDERS_READY_BODY='"error":"not found"' MAILPIT_URL=http://localhost:18025 ./scripts/smoke.sh

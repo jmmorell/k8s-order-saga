@@ -50,10 +50,28 @@ orders_up() {
 
 wait_for "orders to be ready" orders_up
 
-confirmed=$(place_order SKU-001)
-[ -n "$confirmed" ] || fail "no id returned for the SKU-001 order"
-wait_for "order $confirmed to be CONFIRMED" order_has_status "$confirmed" CONFIRMED
-echo "order $confirmed CONFIRMED"
+order_is_final() { # id; succeeds when the order is CONFIRMED or CANCELLED
+  order_has_status "$1" CONFIRMED || order_has_status "$1" CANCELLED
+}
+
+# payments declines about 10 % of the payments on purpose (PAYMENT_FAILURE_RATE). That is a valid
+# CANCELLED (payment_failed) outcome, not a bug, so the order that must be confirmed is retried.
+# Any other outcome (another cancellation reason, a timeout) fails at once.
+confirmed=""
+for attempt in 1 2 3 4 5; do
+  id=$(place_order SKU-001)
+  [ -n "$id" ] || fail "no id returned for the SKU-001 order"
+  wait_for "order $id to reach a final status" order_is_final "$id"
+  if order_has_status "$id" CONFIRMED; then
+    echo "attempt $attempt: order $id CONFIRMED"
+    confirmed=$id
+    break
+  fi
+  reason=$(curl -fsS "$ORDERS/orders/$id" | sed -E 's/.*"reason":"([^"]*)".*/\1/')
+  echo "attempt $attempt: order $id CANCELLED ($reason)"
+  [ "$reason" = payment_failed ] || fail "order $id was cancelled with reason '$reason', expected CONFIRMED"
+done
+[ -n "$confirmed" ] || fail "no SKU-001 order was confirmed in 5 attempts"
 
 cancelled=$(place_order SKU-010)
 [ -n "$cancelled" ] || fail "no id returned for the SKU-010 order"

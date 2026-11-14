@@ -20,6 +20,10 @@ check_prereqs() {
   for tool in kind kubectl helm docker openssl; do
     command -v "$tool" >/dev/null || { echo "missing required tool: $tool" >&2; exit 1; }
   done
+  if [ "$(grep -c "image: $KIND_NODE_IMAGE\$" deploy/local/kind-cluster.yaml)" -ne 3 ]; then
+    echo "kind-cluster.yaml node images do not match KIND_NODE_IMAGE in versions.env" >&2
+    exit 1
+  fi
   docker info >/dev/null 2>&1 || { echo "docker is not running" >&2; exit 1; }
   if ! cluster_exists && lsof -nP -iTCP:8080 -sTCP:LISTEN >/dev/null 2>&1; then
     echo "host port 8080 is in use (is Docker Compose running? try 'make down')" >&2

@@ -26,4 +26,5 @@ Day 2 moves the five services from Docker Compose to Kubernetes. We need a local
 
 - Nodes are Docker containers, so the cluster shares the machine's memory; the platform pods are sized to keep the whole cluster under 6 GB.
 - Differences from GKE: no cloud load balancer (a NodePort plus port mapping replaces it), the default `standard` StorageClass uses local-path volumes on the node, no managed database (Cloud SQL would replace the StatefulSet), and images are loaded with `kind load` instead of pulled from a registry.
+- The node image is pinned by digest to Kubernetes v1.37.0 (`kindest/node`), built for kind 0.33.0; the pin is in `deploy/local/kind-cluster.yaml` and mirrored in `versions.env`.
 - Compose and kind both use host port 8080, so only one can run at a time; `local-up.sh` fails early if the port is taken.

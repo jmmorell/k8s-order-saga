@@ -1,0 +1,13 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: order-saga
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      # Host 8080 -> NodePort 30080, which the Envoy proxy Service uses (task 4).
+      - containerPort: 30080
+        hostPort: 8080
+        listenAddress: 127.0.0.1
+        protocol: TCP
+  - role: worker
+  - role: worker

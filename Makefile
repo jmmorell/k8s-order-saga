@@ -1,4 +1,4 @@
-.PHONY: test test-short lint build up down logs smoke order dlq chart-test
+.PHONY: test test-short lint build up down logs smoke order dlq chart-test local-up local-down local-status
 
 test:
 	go test -race ./...
@@ -40,3 +40,13 @@ dlq:
 # Lints, renders and validates charts/service for every service; needs helm and kubeconform, no cluster.
 chart-test:
 	./scripts/chart-test.sh
+
+# Creates the kind cluster order-saga with NATS, Postgres and Mailpit. Idempotent.
+local-up:
+	./scripts/local-up.sh
+
+local-down:
+	./scripts/local-down.sh
+
+local-status:
+	kubectl --context kind-order-saga get nodes,pods -A -o wide

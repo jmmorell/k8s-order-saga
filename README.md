@@ -73,6 +73,25 @@ make lint
 
 `tests/e2e` runs the four services against real Postgres, NATS and Mailpit containers and covers the happy path, out of stock, unknown SKU and payment failure with compensation.
 
+## Run on Kubernetes (kind)
+
+Day 2 runs the same services on a three-node [kind](https://kind.sigs.k8s.io/) cluster, deployed with one generic Helm chart and reached through Envoy Gateway. Requires Docker, `kind`, `kubectl`, `helm` and `openssl`.
+
+```sh
+make local-up      # creates the cluster order-saga and installs everything; safe to re-run
+make local-smoke   # same checks as make smoke, against the cluster; prints SMOKE OK
+make local-status  # nodes and all pods
+make local-reload  # rebuilds the five images, loads them into kind and restarts the Deployments
+make local-dlq     # message count of every JetStream stream
+make local-down    # deletes the cluster, its data and its Secret
+```
+
+The orders API is at `http://localhost:8080/orders`. Only the `/orders` path is routed; `/healthz` and `/readyz` return 404 from outside. Every `kubectl` and `helm` call passes the context `kind-order-saga`, so the cluster never mixes with your other contexts.
+
+Docker Compose and the kind cluster both use host port 8080, so run only one of them at a time. `make local-up` stops with a clear message if the port is taken (run `make down` first).
+
+To understand every object, work through the guided tour: [docs/day2-tour.md](docs/day2-tour.md).
+
 ## Decisions
 
 | ADR | Decision |
@@ -81,6 +100,9 @@ make lint
 | [0002](docs/adr/0002-nats-jetstream-choreography.md) | NATS JetStream and choreography for the order saga |
 | [0003](docs/adr/0003-at-least-once-idempotency-no-outbox.md) | At-least-once delivery, idempotent handlers, no outbox |
 | [0004](docs/adr/0004-database-per-service.md) | One logical database per service |
+| [0005](docs/adr/0005-kind-local-cluster.md) | kind as the local Kubernetes cluster |
+| [0006](docs/adr/0006-generic-helm-chart.md) | One generic Helm chart for the Go services |
+| [0007](docs/adr/0007-gateway-api-envoy-gateway.md) | Gateway API with Envoy Gateway as the entry point |
 
 ## Delivery semantics
 
@@ -116,3 +138,13 @@ Before day 2 starts, the author checks that they own this part:
 - [ ] Explain in own words: choreography, at-least-once + idempotency, deterministic event IDs, DLQ, the missing outbox
 - [ ] `docker compose stop nats`, POST an order → 503; start NATS → the next order completes
 - [ ] Read the 4 ADRs and be able to defend them
+
+## Day 2 checkpoint
+
+Before day 3 starts, the author checks that they own this part:
+
+- [ ] `make local-down && make local-up && make local-smoke` → `SMOKE OK`
+- [ ] Work through [docs/day2-tour.md](docs/day2-tour.md) top to bottom
+- [ ] Explain in own words: Deployment vs StatefulSet, liveness vs readiness, Service vs Gateway/HTTPRoute, requests vs limits, why the Secret is created by a script
+- [ ] Delete a pod of each service while watching `kubectl --context kind-order-saga get pods -n shop -w` (Postgres and NATS are in `-n platform`); confirm orders keep completing
+- [ ] Read the ADRs 0005–0007 and be able to defend them

@@ -1,4 +1,4 @@
-.PHONY: test test-short lint build up down logs smoke order dlq
+.PHONY: test test-short lint build up down logs smoke order dlq chart-test
 
 test:
 	go test -race ./...
@@ -36,3 +36,7 @@ order:
 # Prints the message count of every JetStream stream (Compose NATS monitor).
 dlq:
 	@curl -fsS 'http://localhost:8222/jsz?streams=true' | python3 -c 'import json,sys; d=json.load(sys.stdin); [print(s["name"], s["state"]["messages"]) for a in d.get("account_details", []) for s in a.get("stream_detail", [])]'
+
+# Lints, renders and validates charts/service for every service; needs helm and kubeconform, no cluster.
+chart-test:
+	./scripts/chart-test.sh

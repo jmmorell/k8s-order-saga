@@ -1,0 +1,7 @@
+image:
+  repository: "" # set by the deploy script
+
+env:
+  TARGET_URL: http://orders.shop.svc.cluster.local:8080
+  RATE_PER_SEC: "2"
+  OUT_OF_STOCK_RATIO: "0.05"

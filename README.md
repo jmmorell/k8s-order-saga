@@ -28,6 +28,8 @@ Requires Docker with Compose.
 ```sh
 make up      # creates .env with a random database password, builds the images, starts the stack
 make smoke   # posts a confirmed and a cancelled order and checks the emails; prints SMOKE OK
+make order   # posts one SKU-001 order and prints it (ORDERS_URL overrides the target)
+make dlq     # message count of every JetStream stream (the dlq stream shows dead letters)
 make logs    # follow the logs of all services
 make down    # stop the stack and delete its volumes
 ```

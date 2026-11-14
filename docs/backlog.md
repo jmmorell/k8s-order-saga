@@ -1,9 +1,6 @@
 # Backlog — deferred findings from day-1 reviews
 
-Minor findings the task and final reviews raised and deliberately left open. None blocks day 2; the first is the one to do first.
-
-## Do first (day 2)
-- `events.Consume`: no `recover` around the handler. A panicking handler would crash-loop its service and block its consumer. No current input triggers a panic.
+Minor findings the task and final reviews raised and deliberately left open. None blocks day 2.
 
 ## Messaging (`internal/platform/events`)
 - Cancelling the context passed to `Consume` does not stop the subscription; callers must call `stop()`.

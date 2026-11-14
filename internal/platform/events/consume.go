@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"runtime/debug"
 	"strconv"
 	"time"
 
@@ -96,7 +97,7 @@ func (c *consumer) handle(ctx context.Context, m jetstream.Msg) {
 		return
 	}
 
-	err = c.h(ctx, e)
+	err = c.call(ctx, e)
 	switch {
 	case err == nil:
 		if err := m.Ack(); err != nil {
@@ -111,6 +112,18 @@ func (c *consumer) handle(ctx context.Context, m jetstream.Msg) {
 			c.log.Error("nak", "error", err, "event_id", e.ID)
 		}
 	}
+}
+
+// call runs the handler and turns a panic into a retryable error, so one bad
+// message cannot crash the service or block the consumer.
+func (c *consumer) call(ctx context.Context, e Envelope) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			c.log.Error("handler panicked", "panic", r, "order_id", e.OrderID, "event_id", e.ID, "stack", string(debug.Stack()))
+			err = fmt.Errorf("handler panicked: %v", r)
+		}
+	}()
+	return c.h(ctx, e)
 }
 
 // deadLetter copies the original bytes to the DLQ and terminates the message.

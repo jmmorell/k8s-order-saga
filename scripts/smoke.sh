@@ -4,6 +4,8 @@
 set -euo pipefail
 
 ORDERS=${ORDERS_URL:-http://localhost:8080}
+# Path used to tell that orders is up; any status below 500 counts (the cluster gateway routes only /orders).
+READY_PATH=${ORDERS_READY_PATH:-/readyz}
 MAILPIT=${MAILPIT_URL:-http://localhost:8025}
 
 fail() { echo "SMOKE FAILED: $*" >&2; exit 1; }
@@ -32,7 +34,13 @@ mail_with_subject() { # subject -> succeeds when Mailpit holds a message with ex
     grep -q "\"Subject\":\"$1\""
 }
 
-wait_for "orders to be ready" curl -fsS "$ORDERS/readyz"
+orders_up() {
+  local code
+  code=$(curl -s -o /dev/null -w '%{http_code}' "$ORDERS$READY_PATH") || return 1
+  [ "$code" -ge 200 ] && [ "$code" -lt 500 ]
+}
+
+wait_for "orders to be ready" orders_up
 
 confirmed=$(place_order SKU-001)
 [ -n "$confirmed" ] || fail "no id returned for the SKU-001 order"

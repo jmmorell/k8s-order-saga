@@ -1,0 +1,40 @@
+# Settings for the Envoy proxy that Envoy Gateway creates for each Gateway of class "eg".
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: local
+  namespace: envoy-gateway-system
+spec:
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyService:
+        type: NodePort
+        # Cluster: the kind port mapping lands on the control-plane node, which may not host the proxy pod.
+        externalTrafficPolicy: Cluster
+        # Strategic merge, keyed by port: pins the HTTP listener (port 80) to the node port that
+        # deploy/local/kind-cluster.yaml maps to host port 8080.
+        patch:
+          type: StrategicMerge
+          value:
+            spec:
+              ports:
+                - port: 80
+                  nodePort: 30080
+      envoyDeployment:
+        container:
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {cpu: 500m, memory: 256Mi}
+        # The shutdown-manager sidecar has no field of its own; patch the Deployment to give it limits.
+        patch:
+          type: StrategicMerge
+          value:
+            spec:
+              template:
+                spec:
+                  containers:
+                    - name: shutdown-manager
+                      resources:
+                        requests: {cpu: 10m, memory: 32Mi}
+                        limits: {cpu: 100m, memory: 64Mi}

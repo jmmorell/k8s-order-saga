@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Creates the kind cluster and installs NATS, Postgres and Mailpit. Safe to re-run.
+# Creates the kind cluster and installs NATS, Postgres, Mailpit, Envoy Gateway and the five
+# services. Safe to re-run. 'local-up.sh reload' only rebuilds and restarts the services.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -9,6 +10,7 @@ source deploy/local/versions.env
 CLUSTER=order-saga
 CTX="kind-${CLUSTER}"
 K=(kubectl --context "$CTX")
+SERVICES=(orders inventory payments notifications loadgen)
 
 cluster_exists() {
   kind get clusters 2>/dev/null | grep -qx "$CLUSTER"
@@ -77,10 +79,64 @@ wait_platform() {
   "${K[@]}" -n platform rollout status deployment/mailpit --timeout=180s
 }
 
+install_gateway() {
+  echo "==> installing envoy gateway $ENVOY_GATEWAY_VERSION"
+  helm upgrade --install eg oci://docker.io/envoyproxy/gateway-helm --version "$ENVOY_GATEWAY_VERSION" \
+    --kube-context "$CTX" -n envoy-gateway-system --create-namespace
+  "${K[@]}" -n envoy-gateway-system rollout status deployment/envoy-gateway --timeout=180s
+  "${K[@]}" apply -f deploy/local/gateway/envoyproxy.yaml -f deploy/local/gateway/gatewayclass.yaml \
+    -f deploy/local/gateway/gateway.yaml -f deploy/local/gateway/httproute.yaml
+  "${K[@]}" -n shop wait --for=condition=Programmed gateway/shop --timeout=180s
+}
+
+build_and_load_images() {
+  echo "==> building and loading service images"
+  local svc
+  for svc in "${SERVICES[@]}"; do
+    docker build -q --build-arg SERVICE="$svc" -t "k8s-order-saga/$svc:dev" . >/dev/null
+  done
+  local images=()
+  for svc in "${SERVICES[@]}"; do images+=("k8s-order-saga/$svc:dev"); done
+  kind load docker-image --name "$CLUSTER" "${images[@]}"
+}
+
+# Installs all five releases at once; the services wait for their dependencies themselves.
+install_services() {
+  echo "==> installing services"
+  local svc
+  for svc in "${SERVICES[@]}"; do
+    helm upgrade --install "$svc" charts/service --kube-context "$CTX" -n shop \
+      -f "deploy/local/values/$svc.yaml" --set image.repository="k8s-order-saga/$svc"
+  done
+}
+
+wait_services() {
+  echo "==> waiting for services"
+  local svc
+  for svc in "${SERVICES[@]}"; do
+    "${K[@]}" -n shop rollout status "deployment/$svc" --timeout=180s
+  done
+}
+
+if [ "${1:-}" = reload ]; then
+  build_and_load_images
+  for svc in "${SERVICES[@]}"; do
+    "${K[@]}" -n shop rollout restart "deployment/$svc"
+  done
+  wait_services
+  exit 0
+fi
+
 check_prereqs
 create_cluster
 apply_namespaces
 ensure_secrets
 install_platform
 wait_platform
+install_gateway
+build_and_load_images
+install_services
+wait_services
 echo "==> local cluster ready (context $CTX)"
+echo "orders: http://localhost:8080/orders"
+echo "next:   make local-smoke | make local-status | make local-dlq | make local-reload"

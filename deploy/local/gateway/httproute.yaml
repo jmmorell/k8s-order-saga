@@ -1,0 +1,17 @@
+# The only route into the cluster: /orders goes to the orders Service. Nothing else is exposed.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: orders
+  namespace: shop
+spec:
+  parentRefs:
+    - name: shop
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /orders
+      backendRefs:
+        - name: orders
+          port: 8080

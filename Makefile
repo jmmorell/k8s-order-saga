@@ -1,4 +1,4 @@
-.PHONY: test test-short lint build up down logs smoke order dlq chart-test local-up local-down local-status
+.PHONY: test test-short lint build up down logs smoke order dlq chart-test local-up local-down local-status local-smoke local-dlq local-reload
 
 test:
 	go test -race ./...
@@ -41,7 +41,7 @@ dlq:
 chart-test:
 	./scripts/chart-test.sh
 
-# Creates the kind cluster order-saga with NATS, Postgres and Mailpit. Idempotent.
+# Creates the kind cluster order-saga with NATS, Postgres, Mailpit, Envoy Gateway and the five services. Idempotent.
 local-up:
 	./scripts/local-up.sh
 
@@ -50,3 +50,15 @@ local-down:
 
 local-status:
 	kubectl --context kind-order-saga get nodes,pods -A -o wide
+
+# Runs the smoke test against the kind cluster (orders via the gateway, Mailpit via port-forward).
+local-smoke:
+	./scripts/local-smoke.sh
+
+# Prints the message count of every JetStream stream in the kind cluster.
+local-dlq:
+	./scripts/local-dlq.sh
+
+# Rebuilds the five images, loads them into kind and restarts the Deployments.
+local-reload:
+	./scripts/local-up.sh reload

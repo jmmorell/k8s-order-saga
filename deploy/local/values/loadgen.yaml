@@ -1,5 +1,6 @@
 image:
-  repository: "" # set by the deploy script
+  repository: k8s-order-saga/loadgen
+  tag: dev
 
 env:
   TARGET_URL: http://orders.shop.svc.cluster.local:8080

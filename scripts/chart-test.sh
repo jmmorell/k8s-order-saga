@@ -22,20 +22,21 @@ expect() {
 
 for svc in $services; do
   echo "== $svc"
-  helm lint --strict "$chart" -f "deploy/local/values/$svc.yaml" --set image.repository="k8s-order-saga/$svc"
+  helm lint --strict "$chart" -f "deploy/local/values/$svc.yaml"
 
-  out=$(render "$svc" --set image.repository="k8s-order-saga/$svc")
+  out=$(render "$svc")
   kubeconform -strict -summary <<<"$out"
 
   for s in "readOnlyRootFilesystem: true" "runAsNonRoot: true" \
-    "allowPrivilegeEscalation: false" "livenessProbe:" "readinessProbe:" \
-    "path: /healthz" "path: /readyz" "requests:" "limits:" "kind: Deployment" \
+    "allowPrivilegeEscalation: false" "startupProbe:" "livenessProbe:" "readinessProbe:" \
+    "path: /healthz" "path: /readyz" "failureThreshold: 24" "timeoutSeconds: 3" \
+    "preStop:" "seconds: 5" "requests:" "limits:" "kind: Deployment" \
     "kind: Service" "kind: ServiceAccount" "- name: HTTP_ADDR"; do
     expect "$svc" "$s" "$out"
   done
 done
 
-orders=$(render orders --set image.repository=k8s-order-saga/orders)
+orders=$(render orders)
 expect orders "replicas: 2" "$orders"
 
 pw=$(awk '/- name: POSTGRES_PASSWORD/ {print NR; exit}' <<<"$orders")
@@ -44,7 +45,7 @@ db=$(awk '/- name: DATABASE_URL/ {print NR; exit}' <<<"$orders")
 [ "$pw" -lt "$db" ] || fail "orders: POSTGRES_PASSWORD must be listed before DATABASE_URL"
 expect orders '$(POSTGRES_PASSWORD)' "$orders"
 
-if render orders >/dev/null 2>&1; then
+if helm template orders "$chart" --namespace shop >/dev/null 2>&1; then
   fail "rendering without image.repository should fail"
 fi
 

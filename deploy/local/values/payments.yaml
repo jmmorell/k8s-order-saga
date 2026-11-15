@@ -1,7 +1,8 @@
 replicaCount: 1
 
 image:
-  repository: "" # set by the deploy script
+  repository: k8s-order-saga/payments
+  tag: dev
 
 secretEnv:
   - name: POSTGRES_PASSWORD

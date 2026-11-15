@@ -1,5 +1,5 @@
 image:
-  repository: "" # required; passed by the deploy script
+  repository: "" # required; set in the values file of each service
   tag: dev
   pullPolicy: IfNotPresent
 

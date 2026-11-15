@@ -47,3 +47,17 @@ Minor findings the task and final reviews raised and deliberately left open. Non
 - `customer_email` is validated only by "contains @".
 - `Consume` does not reject an envelope whose `type` differs from its subject or whose `order_id` is nil.
 - Payments are handled one at a time per consumer, so raising `PAYMENT_LATENCY_MS` builds a backlog.
+
+## Day 2
+- `make dlq` / `make local-dlq` need `python3`.
+- `scripts/chart-test.sh` greps the whole render instead of the Deployment document, and its negative test does not check the failure message.
+- `deploy/local/versions.env` lists `POSTGRES_IMAGE` / `MAILPIT_IMAGE` that nothing reads (the tags are duplicated in the manifests).
+- The Postgres password is passed with `--from-literal` (visible in argv); shellcheck is not run on the scripts.
+- The kind node-image check is whitespace-fragile and hard-codes three nodes (it fails closed).
+- `local-smoke` / `local-dlq` port-forwards fail silently if the local port is taken.
+- The `reload` branch of `local-up.sh` skips `check_prereqs`.
+- The `nats` readiness check is connection-level; a JetStream-level check would be more truthful.
+- Readiness depends on NATS for every service, so during a NATS outage both `orders` replicas leave the Service and even `GET /orders/{id}` (Postgres only) is unavailable. Alternative: readiness means "can serve my HTTP API" and `POST` returns 503 by itself. A deliberate simplification to revisit.
+- No `topologySpreadConstraints` or PodDisruptionBudget for the two `orders` replicas.
+- No `GOMEMLIMIT` derived from the memory limit.
+- Day-4 notes: the `postgres` Secret is created outside Git (Argo-synced pods wait for it); `platform` will not pass Pod Security `restricted` as-is; `automountServiceAccountToken: false` is not set yet.

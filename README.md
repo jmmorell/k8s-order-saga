@@ -86,7 +86,11 @@ make local-dlq     # message count of every JetStream stream
 make local-down    # deletes the cluster, its data and its Secret
 ```
 
-The orders API is at `http://localhost:8080/orders`. Only the `/orders` path is routed; `/healthz` and `/readyz` return 404 from outside. Every `kubectl` and `helm` call passes the context `kind-order-saga`, so the cluster never mixes with your other contexts.
+The orders API is at `http://localhost:8080/orders`. Only the `/orders` path is routed; `/healthz` and `/readyz` return 404 from outside. Every `kubectl` and `helm` call passes the context `kind-order-saga`, so the cluster never mixes with your other contexts. (`kind create cluster` does switch kubectl's current context to `kind-order-saga`; the scripts never rely on it.)
+
+After changing code, use `make local-reload`: re-running `make local-up` rebuilds and loads the `:dev` images but does not restart running pods.
+
+`make smoke` and `make local-smoke` retry the confirmed order up to 5 times when the simulated payment is declined.
 
 Docker Compose and the kind cluster both use host port 8080, so run only one of them at a time. `make local-up` stops with a clear message if the port is taken (run `make down` first).
 

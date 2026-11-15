@@ -2,7 +2,7 @@
 
 You know GCP and the terminal, but you have not configured Kubernetes by hand. This tour walks you through everything day 2 built, one object at a time. For each piece you see what it is, which file defines it, how to look at it live, and (where it is safe) how to break it and watch it heal.
 
-You need the cluster running (`make local-up`, then `make local-smoke` prints `SMOKE OK`). Every command passes `--context kind-order-saga`, because this machine also has other Kubernetes contexts and you never want to touch the wrong cluster. The commands are written for zsh and bash and can be copied as they are.
+You need the cluster running (`make local-up`, then `make local-smoke` prints `SMOKE OK`). Every command passes `--context kind-order-saga`, because this machine also has other Kubernetes contexts and you never want to touch the wrong cluster. The commands are written for zsh and bash and can be copied as they are. Run every command from the repository root.
 
 Some commands run forever (`kubectl get pods -w`). Run those in a second terminal and stop them with Ctrl-C.
 
@@ -86,12 +86,14 @@ Most commands only see one namespace. If a `kubectl get` returns "No resources f
 
 **What it is.** A Deployment says "keep N identical copies of this pod running". It does not manage pods directly: it creates a ReplicaSet, and the ReplicaSet creates the pods. When you change the pod template (say, a new image), the Deployment creates a new ReplicaSet and slowly moves pods over. That is how rolling updates work.
 
-**Defined in** the chart `charts/service`. A Helm chart is a folder of templates plus default values; Helm fills the templates in and sends the result to the cluster. One chart serves all five services (ADR 0006): the release name is the service name, and `deploy/local/values/<service>.yaml` holds what differs (for `orders`: two replicas and its environment). The Deployment template is `charts/service/templates/deployment.yaml`.
+**Defined in** the chart `charts/service`. A Helm chart is a folder of templates plus default values; Helm fills the templates in and sends the result to the cluster. One chart serves all five services (ADR 0006): the release name is the service name, and `deploy/local/values/<service>.yaml` holds what differs (for `orders`: the image, two replicas and its environment). The Deployment template is `charts/service/templates/deployment.yaml`.
+
+The template also sets a `preStop` hook that sleeps 5 seconds. When a pod is deleted, removing it from the Service's endpoints and stopping the container happen at the same time, and the endpoint removal reaches the proxy a moment later. The sleep keeps the server accepting connections during that moment, so a rollout does not drop requests.
 
 Render the chart without touching the cluster:
 
 ```bash
-helm template orders charts/service -f deploy/local/values/orders.yaml --set image.repository=k8s-order-saga/orders
+helm template orders charts/service -f deploy/local/values/orders.yaml
 ```
 
 You should see three YAML documents: a ServiceAccount, a Service and a Deployment named `orders` with `replicas: 2`. This is exactly what `scripts/local-up.sh` installs. Compare it with `charts/service/templates/deployment.yaml` and notice which blanks the values filled in.
@@ -200,22 +202,23 @@ You should see `32` (16 random bytes in hex).
 
 ## 5. Probes
 
-**What it is.** A probe is a check the kubelet runs against a container. This chart defines two on every service, both HTTP on port 8080:
+**What it is.** A probe is a check the kubelet runs against a container. This chart defines three on every service, all HTTP on port 8080:
 
-- **Liveness** (`GET /healthz`): "is the process alive?" If it fails three times in a row, the kubelet kills the container and starts a new one (a restart).
-- **Readiness** (`GET /readyz`): "can it take traffic right now?" If it fails, the pod stays running but is taken out of its Service, so no traffic reaches it. No restart.
+- **Startup** (`GET /healthz`): "has the process finished starting?" A service opens its HTTP port only after Postgres and NATS answer, so a slow dependency means a slow start. The startup probe checks every 5 seconds and allows 24 failures, so the service gets up to 2 minutes. Liveness and readiness do not run until it passes; if it never does, the kubelet restarts the container.
+- **Liveness** (`GET /healthz`): "is the process alive?" Once startup has passed, if it fails three times in a row, the kubelet kills the container and starts a new one (a restart). It never depends on a dependency.
+- **Readiness** (`GET /readyz`): "can it take traffic right now?" It does check the dependencies. If it fails, the pod stays running but is taken out of its Service, so no traffic reaches it. No restart.
 
-The split matters. A dependency being down (NATS, the database) is not fixed by restarting your service, so it belongs in readiness. In these services `/healthz` always answers 200, and `/readyz` answers 503 with the failed check names when NATS or the database is unreachable. `loadgen` has no dependency checks, so its `/readyz` is always 200.
+The split matters. A dependency being down (NATS, the database) is not fixed by restarting your service, so it belongs in readiness. In these services `/healthz` always answers 200 once the port is open, and `/readyz` answers 503 with the failed check names when NATS or the database is unreachable. `loadgen` has no dependency checks, so its `/readyz` is always 200.
 
 **Defined in** `charts/service/templates/deployment.yaml` (probes) and `internal/platform/httpx/health.go` (what the endpoints answer).
 
 See both probes of a running pod:
 
 ```bash
-kubectl --context kind-order-saga describe pod -n shop -l app.kubernetes.io/name=orders | grep -E "Liveness:|Readiness:"
+kubectl --context kind-order-saga describe pod -n shop -l app.kubernetes.io/name=orders | grep -E "Startup:|Liveness:|Readiness:"
 ```
 
-You should see each probe printed twice (one line per pod), `http-get http://:http/healthz` and `/readyz`, with `period=10s` and `#failure=3`.
+You should see each probe printed twice (one line per pod), `http-get http://:http/healthz` and `/readyz`, with `period=10s` and `#failure=3`. Describe also lists the `Startup:` probe (`period=5s`, `#failure=24`), which `grep` here does not show.
 
 ### Break it and watch: take NATS away
 
@@ -239,13 +242,15 @@ While it is down, ask for an order:
 curl -s -w ' %{http_code}\n' -X POST localhost:8080/orders -H 'Content-Type: application/json' -d '{"customer_email":"tour@example.local","items":[{"sku":"SKU-001","qty":1}]}'
 ```
 
-You should see `{"error":"temporarily unavailable"}` and `503`: orders refuses to accept an order it cannot publish. Check what loadgen sees:
+You should see `{"error":"temporarily unavailable"}` and `503`: orders refuses to accept an order it cannot publish. If the POST still returns 202, wait 20 seconds and try again. Check what loadgen sees:
 
 ```bash
 kubectl --context kind-order-saga logs -n shop deploy/loadgen --tail=2
 ```
 
 You should see a line like `responses in the last 30s` with a `"503"` count next to the usual `"202"` count.
+
+**A trade-off to know about.** Readiness depends on NATS for every service. During a NATS outage both `orders` replicas leave the Service at once, so even `GET /orders/{id}`, which only needs Postgres, is unavailable. The alternative is to define readiness as "can serve my HTTP API" and let `POST` return 503 by itself. This is a deliberate simplification to revisit (it is in `docs/backlog.md`).
 
 See why the Service stopped sending traffic to the `orders` pods:
 
@@ -338,6 +343,8 @@ Count the orders in the database:
 ```bash
 kubectl --context kind-order-saga exec -n platform postgres-0 -- psql -U postgres -d orders -tAc "select count(*) from orders"
 ```
+
+`psql -U postgres` asks for no password because connections over the pod's local socket are trusted by the image's default `pg_hba.conf`.
 
 You should see a number (it grows steadily because loadgen places orders). Delete the pod:
 

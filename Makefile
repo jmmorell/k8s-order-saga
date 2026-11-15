@@ -30,7 +30,8 @@ smoke:
 order:
 	@url=$${ORDERS_URL:-http://localhost:8080}; \
 	id=$$(curl -fsS -X POST "$$url/orders" -H 'Content-Type: application/json' \
-	  -d '{"customer_email":"make@example.local","items":[{"sku":"SKU-001","qty":1}]}' | sed -E 's/.*"id":"([^"]+)".*/\1/'); \
+	  -d '{"customer_email":"make@example.local","items":[{"sku":"SKU-001","qty":1}]}' | sed -nE 's/.*"id":"([^"]+)".*/\1/p'); \
+	test -n "$$id" || { echo "POST $$url/orders returned no order id" >&2; exit 1; }; \
 	sleep 1; curl -fsS "$$url/orders/$$id"; echo
 
 # Prints the message count of every JetStream stream (Compose NATS monitor).

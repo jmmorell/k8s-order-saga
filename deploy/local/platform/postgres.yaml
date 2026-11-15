@@ -17,7 +17,7 @@ metadata:
   labels:
     app.kubernetes.io/name: postgres
 spec:
-  serviceName: postgres
+  serviceName: postgres-headless
   replicas: 1
   selector:
     matchLabels:
@@ -74,6 +74,21 @@ metadata:
   name: postgres
   namespace: platform
 spec:
+  selector:
+    app.kubernetes.io/name: postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+---
+# Governing Service of the StatefulSet (stable pod DNS names); clients use the Service above.
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-headless
+  namespace: platform
+spec:
+  clusterIP: None
   selector:
     app.kubernetes.io/name: postgres
   ports:

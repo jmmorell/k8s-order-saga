@@ -51,20 +51,34 @@ apply_namespaces() {
 ensure_secrets() {
   echo "==> ensuring postgres secret"
   local password
-  if "${K[@]}" -n platform get secret postgres >/dev/null 2>&1; then
-    if ! "${K[@]}" -n shop get secret postgres >/dev/null 2>&1; then
-      password=$("${K[@]}" -n platform get secret postgres -o jsonpath='{.data.password}' | base64 --decode)
-      "${K[@]}" -n shop create secret generic postgres --from-literal=password="$password" >/dev/null
-    fi
+  local have_platform=false have_shop=false
+  "${K[@]}" -n platform get secret postgres >/dev/null 2>&1 && have_platform=true
+  "${K[@]}" -n shop get secret postgres >/dev/null 2>&1 && have_shop=true
+  if $have_platform && $have_shop; then
     return
   fi
-  password=$(openssl rand -hex 16)
-  "${K[@]}" -n platform create secret generic postgres --from-literal=password="$password" >/dev/null
-  "${K[@]}" -n shop create secret generic postgres --from-literal=password="$password" >/dev/null
+  # One of the two may survive a half-finished run: copy it so both always hold the same password.
+  if $have_platform; then
+    password=$("${K[@]}" -n platform get secret postgres -o jsonpath='{.data.password}' | base64 --decode)
+    "${K[@]}" -n shop create secret generic postgres --from-literal=password="$password" >/dev/null
+  elif $have_shop; then
+    password=$("${K[@]}" -n shop get secret postgres -o jsonpath='{.data.password}' | base64 --decode)
+    "${K[@]}" -n platform create secret generic postgres --from-literal=password="$password" >/dev/null
+  else
+    password=$(openssl rand -hex 16)
+    "${K[@]}" -n platform create secret generic postgres --from-literal=password="$password" >/dev/null
+    "${K[@]}" -n shop create secret generic postgres --from-literal=password="$password" >/dev/null
+  fi
 }
 
 install_platform() {
   echo "==> installing postgres and mailpit"
+  # serviceName is immutable: a cluster from before postgres-headless existed needs the
+  # StatefulSet recreated. --cascade=orphan keeps the pod and the PVC, so the data survives.
+  if [ "$("${K[@]}" -n platform get statefulset postgres -o jsonpath='{.spec.serviceName}' 2>/dev/null)" = postgres ]; then
+    echo "==> recreating the postgres StatefulSet (serviceName changed); pod and data are kept"
+    "${K[@]}" -n platform delete statefulset postgres --cascade=orphan
+  fi
   "${K[@]}" apply -f deploy/local/platform/postgres.yaml -f deploy/local/platform/mailpit.yaml
   echo "==> installing nats chart $NATS_CHART_VERSION"
   helm repo add nats https://nats-io.github.io/k8s/helm/charts/ --force-update >/dev/null
@@ -82,7 +96,8 @@ wait_platform() {
 install_gateway() {
   echo "==> installing envoy gateway $ENVOY_GATEWAY_VERSION"
   helm upgrade --install eg oci://docker.io/envoyproxy/gateway-helm --version "$ENVOY_GATEWAY_VERSION" \
-    --kube-context "$CTX" -n envoy-gateway-system --create-namespace
+    --kube-context "$CTX" -n envoy-gateway-system --create-namespace \
+    -f deploy/local/values/envoy-gateway.yaml
   "${K[@]}" -n envoy-gateway-system rollout status deployment/envoy-gateway --timeout=180s
   "${K[@]}" apply -f deploy/local/gateway/envoyproxy.yaml -f deploy/local/gateway/gatewayclass.yaml \
     -f deploy/local/gateway/gateway.yaml -f deploy/local/gateway/httproute.yaml
@@ -100,13 +115,14 @@ build_and_load_images() {
   kind load docker-image --name "$CLUSTER" "${images[@]}"
 }
 
-# Installs all five releases at once; the services wait for their dependencies themselves.
+# Installs all five releases at once. A service opens its HTTP port only after Postgres and NATS
+# answer, so the chart's startup probe gives it up to 2 minutes; liveness never depends on them.
 install_services() {
   echo "==> installing services"
   local svc
   for svc in "${SERVICES[@]}"; do
     helm upgrade --install "$svc" charts/service --kube-context "$CTX" -n shop \
-      -f "deploy/local/values/$svc.yaml" --set image.repository="k8s-order-saga/$svc"
+      -f "deploy/local/values/$svc.yaml"
   done
 }
 

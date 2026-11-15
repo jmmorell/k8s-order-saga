@@ -1,6 +1,7 @@
 package events
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -8,10 +9,9 @@ import (
 	"github.com/nats-io/nats.go/jetstream"
 )
 
-const connectTimeout = 30 * time.Second
-
-// Connect opens a NATS connection that keeps retrying, and a JetStream handle.
-func Connect(url, name string) (*nats.Conn, jetstream.JetStream, error) {
+// Connect opens a NATS connection that keeps retrying, and a JetStream handle. It waits for
+// the first connection until ctx ends, like pgutil.Connect does for Postgres.
+func Connect(ctx context.Context, url, name string) (*nats.Conn, jetstream.JetStream, error) {
 	nc, err := nats.Connect(url,
 		nats.Name(name),
 		nats.RetryOnFailedConnect(true),
@@ -25,13 +25,13 @@ func Connect(url, name string) (*nats.Conn, jetstream.JetStream, error) {
 	}
 	// RetryOnFailedConnect returns before the first connection is up, and without a
 	// reconnect buffer every call made in that window would fail. Wait for it.
-	deadline := time.Now().Add(connectTimeout)
 	for !nc.IsConnected() {
-		if time.Now().After(deadline) {
+		select {
+		case <-ctx.Done():
 			nc.Close()
-			return nil, nil, fmt.Errorf("connect to nats: not connected after %s", connectTimeout)
+			return nil, nil, fmt.Errorf("connect to nats: %w", ctx.Err())
+		case <-time.After(50 * time.Millisecond):
 		}
-		time.Sleep(50 * time.Millisecond)
 	}
 	js, err := jetstream.New(nc)
 	if err != nil {

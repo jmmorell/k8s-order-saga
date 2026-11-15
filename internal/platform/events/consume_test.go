@@ -24,7 +24,7 @@ func setup(t *testing.T) (*nats.Conn, jetstream.JetStream) {
 	if testing.Short() {
 		t.Skip()
 	}
-	nc, js, err := events.Connect(testinfra.NATS(t), "test")
+	nc, js, err := events.Connect(context.Background(), testinfra.NATS(t), "test")
 	require.NoError(t, err)
 	t.Cleanup(nc.Close)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

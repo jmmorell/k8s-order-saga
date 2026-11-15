@@ -49,7 +49,7 @@ func setup(t *testing.T) env {
 	t.Cleanup(pool.Close)
 	require.NoError(t, pgutil.Migrate(ctx, pool, payments.Migrations()))
 
-	nc, js, err := events.Connect(testinfra.NATS(t), "test")
+	nc, js, err := events.Connect(context.Background(), testinfra.NATS(t), "test")
 	require.NoError(t, err)
 	t.Cleanup(nc.Close)
 	require.NoError(t, events.EnsureStreams(ctx, js))

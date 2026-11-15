@@ -116,7 +116,8 @@ build_and_load_images() {
 }
 
 # Installs all five releases at once. A service opens its HTTP port only after Postgres and NATS
-# answer, so the chart's startup probe gives it up to 2 minutes; liveness never depends on them.
+# answer and waits for both without giving up, so the chart's startup probe gives it up to
+# 2 minutes, after which the kubelet restarts it; liveness never depends on them.
 install_services() {
   echo "==> installing services"
   local svc

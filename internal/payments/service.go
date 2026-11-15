@@ -175,7 +175,7 @@ func Run(ctx context.Context, cfg Config, log *slog.Logger) error {
 		return err
 	}
 
-	nc, js, err := events.Connect(cfg.NATSURL, "payments")
+	nc, js, err := events.Connect(ctx, cfg.NATSURL, "payments")
 	if err != nil {
 		return err
 	}

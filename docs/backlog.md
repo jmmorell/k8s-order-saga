@@ -8,7 +8,6 @@ Minor findings the task and final reviews raised and deliberately left open. Non
 - The default pull buffer can exceed `AckWait` when handlers are slow, burning delivery attempts.
 - An empty `Subjects` list consumes the whole stream; it should be a validation error.
 - DLQ publishes carry no `Nats-Msg-Id`, so a failed `Term` after a successful DLQ publish duplicates the DLQ entry.
-- `Connect` takes no context: a SIGTERM during its 30 s start-up wait is not honoured.
 - Test tidiness in `consume_test.go`.
 - Saga logging: if a commit succeeds but the publish fails, the redelivery only logs DEBUG `re-published stored outcome`, so that transition never gets an INFO line.
 
@@ -57,6 +56,7 @@ Minor findings the task and final reviews raised and deliberately left open. Non
 - `local-smoke` / `local-dlq` port-forwards fail silently if the local port is taken.
 - The `reload` branch of `local-up.sh` skips `check_prereqs`.
 - The `nats` readiness check is connection-level; a JetStream-level check would be more truthful.
+- Services open their HTTP listener only after dependencies are reachable; starting the listener first would make `/healthz` available immediately and remove start-up restarts entirely.
 - Readiness depends on NATS for every service, so during a NATS outage both `orders` replicas leave the Service and even `GET /orders/{id}` (Postgres only) is unavailable. Alternative: readiness means "can serve my HTTP API" and `POST` returns 503 by itself. A deliberate simplification to revisit.
 - No `topologySpreadConstraints` or PodDisruptionBudget for the two `orders` replicas.
 - No `GOMEMLIMIT` derived from the memory limit.

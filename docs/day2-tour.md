@@ -204,7 +204,7 @@ You should see `32` (16 random bytes in hex).
 
 **What it is.** A probe is a check the kubelet runs against a container. This chart defines three on every service, all HTTP on port 8080:
 
-- **Startup** (`GET /healthz`): "has the process finished starting?" A service opens its HTTP port only after Postgres and NATS answer, so a slow dependency means a slow start. The startup probe checks every 5 seconds and allows 24 failures, so the service gets up to 2 minutes. Liveness and readiness do not run until it passes; if it never does, the kubelet restarts the container.
+- **Startup** (`GET /healthz`): "has the process finished starting?" A service opens its HTTP port only after Postgres and NATS answer, and it waits for both as long as it takes (it does not give up by itself), so a slow dependency means a slow start. The startup probe checks every 5 seconds and allows 24 failures, so the service gets up to 2 minutes. Liveness and readiness do not run until it passes; if a dependency is still missing after 2 minutes, the kubelet restarts the container.
 - **Liveness** (`GET /healthz`): "is the process alive?" Once startup has passed, if it fails three times in a row, the kubelet kills the container and starts a new one (a restart). It never depends on a dependency.
 - **Readiness** (`GET /readyz`): "can it take traffic right now?" It does check the dependencies. If it fails, the pod stays running but is taken out of its Service, so no traffic reaches it. No restart.
 
@@ -218,7 +218,7 @@ See both probes of a running pod:
 kubectl --context kind-order-saga describe pod -n shop -l app.kubernetes.io/name=orders | grep -E "Startup:|Liveness:|Readiness:"
 ```
 
-You should see each probe printed twice (one line per pod), `http-get http://:http/healthz` and `/readyz`, with `period=10s` and `#failure=3`. Describe also lists the `Startup:` probe (`period=5s`, `#failure=24`), which `grep` here does not show.
+You should see each probe printed twice (one line per pod), `http-get http://:http/healthz` and `/readyz`, with `period=10s` and `#failure=3`, plus the `Startup:` probe once per pod (`period=5s`, `#failure=24`).
 
 ### Break it and watch: take NATS away
 

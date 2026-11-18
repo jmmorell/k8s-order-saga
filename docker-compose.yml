@@ -1,0 +1,114 @@
+x-service: &service
+  restart: unless-stopped
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run make up to create .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./deploy/compose/postgres-init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  nats:
+    image: nats:2.11-alpine
+    command: ["-js", "-sd", "/data", "-m", "8222"]
+    ports:
+      - "127.0.0.1:8222:8222"
+    volumes:
+      - natsdata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8222/healthz"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  mailpit:
+    image: axllent/mailpit:v1.33.1
+    environment:
+      # Without this Mailpit stalls each SMTP greeting ~10 s on a reverse DNS lookup.
+      MP_SMTP_DISABLE_RDNS: "true"
+    ports:
+      - "127.0.0.1:8025:8025"
+
+  orders:
+    <<: *service
+    build:
+      context: .
+      args: {SERVICE: orders}
+    image: k8s-order-saga/orders:dev
+    environment:
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/orders?sslmode=disable
+      NATS_URL: nats://nats:4222
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      postgres: {condition: service_healthy}
+      nats: {condition: service_healthy}
+
+  inventory:
+    <<: *service
+    build:
+      context: .
+      args: {SERVICE: inventory}
+    image: k8s-order-saga/inventory:dev
+    environment:
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/inventory?sslmode=disable
+      NATS_URL: nats://nats:4222
+      RESTOCK_INTERVAL: 1m
+    depends_on:
+      postgres: {condition: service_healthy}
+      nats: {condition: service_healthy}
+
+  payments:
+    <<: *service
+    build:
+      context: .
+      args: {SERVICE: payments}
+    image: k8s-order-saga/payments:dev
+    environment:
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/payments?sslmode=disable
+      NATS_URL: nats://nats:4222
+      PAYMENT_FAILURE_RATE: ${PAYMENT_FAILURE_RATE:-0.1}
+      PAYMENT_LATENCY_MS: ${PAYMENT_LATENCY_MS:-200}
+    depends_on:
+      postgres: {condition: service_healthy}
+      nats: {condition: service_healthy}
+
+  notifications:
+    <<: *service
+    build:
+      context: .
+      args: {SERVICE: notifications}
+    image: k8s-order-saga/notifications:dev
+    environment:
+      NATS_URL: nats://nats:4222
+      SMTP_ADDR: mailpit:1025
+    depends_on:
+      nats: {condition: service_healthy}
+      mailpit: {condition: service_started}
+
+  loadgen:
+    <<: *service
+    build:
+      context: .
+      args: {SERVICE: loadgen}
+    image: k8s-order-saga/loadgen:dev
+    environment:
+      TARGET_URL: http://orders:8080
+      RATE_PER_SEC: ${RATE_PER_SEC:-2}
+      OUT_OF_STOCK_RATIO: ${OUT_OF_STOCK_RATIO:-0.05}
+    depends_on:
+      orders: {condition: service_started}
+
+volumes:
+  pgdata:
+  natsdata:

@@ -1,0 +1,52 @@
+// Command inventory runs the inventory service.
+package main
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/jmmorell/k8s-order-saga/internal/inventory"
+	"github.com/jmmorell/k8s-order-saga/internal/platform/config"
+	"github.com/jmmorell/k8s-order-saga/internal/platform/logx"
+)
+
+func main() {
+	log := logx.New("inventory", config.String("LOG_LEVEL", "info"))
+	if err := run(log); err != nil {
+		log.Error("inventory stopped", "error", err)
+		os.Exit(1)
+	}
+}
+
+func run(log *slog.Logger) error {
+	dbURL, err := config.Required("DATABASE_URL")
+	if err != nil {
+		return err
+	}
+	natsURL, err := config.Required("NATS_URL")
+	if err != nil {
+		return err
+	}
+	restock, err := config.Duration("RESTOCK_INTERVAL", time.Minute)
+	if err != nil {
+		return err
+	}
+	cfg := inventory.Config{
+		HTTPAddr:        config.String("HTTP_ADDR", ":8080"),
+		DatabaseURL:     dbURL,
+		NATSURL:         natsURL,
+		RestockInterval: restock,
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	if err := inventory.Run(ctx, cfg, log); err != nil {
+		return fmt.Errorf("run: %w", err)
+	}
+	return nil
+}

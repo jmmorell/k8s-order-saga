@@ -40,6 +40,24 @@ func Sum(t testing.TB, r *sdkmetric.ManualReader, name string, attrs ...attribut
 	return 0
 }
 
+// Gauge collects the int64 gauge called name, which runs its callbacks, and
+// returns its value for the single series. ok is false if nothing was observed.
+func Gauge(t testing.TB, r *sdkmetric.ManualReader, name string) (v int64, ok bool) {
+	t.Helper()
+	m := find(t, r, name)
+	if m == nil {
+		return 0, false
+	}
+	g, isGauge := m.Data.(metricdata.Gauge[int64])
+	if !isGauge {
+		t.Fatalf("metric %q is %T, not an int64 gauge", name, m.Data)
+	}
+	if len(g.DataPoints) == 0 {
+		return 0, false
+	}
+	return g.DataPoints[0].Value, true
+}
+
 // HistogramCount returns the number of observations recorded in the histogram
 // called name, across all attribute sets.
 func HistogramCount(t testing.TB, r *sdkmetric.ManualReader, name string) uint64 {

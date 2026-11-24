@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -14,11 +15,14 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nats-io/nats.go/jetstream"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/attribute"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 
 	"github.com/jmmorell/k8s-order-saga/internal/inventory"
 	"github.com/jmmorell/k8s-order-saga/internal/platform/events"
 	"github.com/jmmorell/k8s-order-saga/internal/platform/logx"
 	"github.com/jmmorell/k8s-order-saga/internal/platform/pgutil"
+	"github.com/jmmorell/k8s-order-saga/internal/platform/telemetry/telemetrytest"
 	"github.com/jmmorell/k8s-order-saga/internal/platform/testinfra"
 )
 
@@ -352,4 +356,33 @@ func TestLogs_TransitionsAtInfoRedeliveryAtDebug(t *testing.T) {
 	require.Equal(t, rej.String(), rejected[0]["order_id"])
 	require.Equal(t, "NOPE", rejected[0]["sku"])
 	require.NotEmpty(t, rejected[0]["reason"])
+}
+
+var reader *sdkmetric.ManualReader
+
+func TestMain(m *testing.M) {
+	reader = telemetrytest.NewReader()
+	os.Exit(m.Run())
+}
+
+func TestInventory_RepublishDoesNotCount(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+	count := func(result string) int64 {
+		return telemetrytest.Sum(t, reader, "saga.inventory.operations", attribute.String("result", result))
+	}
+	reserved, rejected, released := count("reserved"), count("rejected"), count("released")
+
+	oid := uuid.New()
+	env := orderCreated(t, oid, events.Item{SKU: "SKU-001", Qty: 1})
+	require.NoError(t, e.svc.HandleOrderCreated(ctx, env))
+	require.NoError(t, e.svc.HandleOrderCreated(ctx, env))
+	require.EqualValues(t, reserved+1, count("reserved"))
+
+	require.NoError(t, e.svc.HandleOrderCreated(ctx, orderCreated(t, uuid.New(), events.Item{SKU: "NOPE", Qty: 1})))
+	require.EqualValues(t, rejected+1, count("rejected"))
+
+	require.NoError(t, e.svc.HandlePaymentFailed(ctx, paymentFailed(t, oid)))
+	require.NoError(t, e.svc.HandlePaymentFailed(ctx, paymentFailed(t, oid)))
+	require.EqualValues(t, released+1, count("released"))
 }

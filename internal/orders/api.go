@@ -151,6 +151,7 @@ func (s *Service) create(w http.ResponseWriter, r *http.Request) {
 		s.fail(r.Context(), w, "publish orders.created", err)
 		return
 	}
+	createdCounter.Add(r.Context(), 1)
 	s.log.InfoContext(r.Context(), "order created", "order_id", id.String(), "items", len(req.Items))
 	writeJSON(w, http.StatusAccepted, map[string]any{"id": id, "status": StatusPending})
 }

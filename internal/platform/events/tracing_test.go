@@ -13,16 +13,22 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/propagation"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/jmmorell/k8s-order-saga/internal/platform/events"
+	"github.com/jmmorell/k8s-order-saga/internal/platform/telemetry/telemetrytest"
 )
 
-var recorder = tracetest.NewSpanRecorder()
+var (
+	recorder = tracetest.NewSpanRecorder()
+	reader   *sdkmetric.ManualReader
+)
 
 func TestMain(m *testing.M) {
+	reader = telemetrytest.NewReader()
 	otel.SetTracerProvider(sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder)))
 	otel.SetTextMapPropagator(propagation.TraceContext{})
 	os.Exit(m.Run())

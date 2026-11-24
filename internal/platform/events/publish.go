@@ -36,5 +36,6 @@ func Publish(ctx context.Context, js jetstream.JetStream, e Envelope) (err error
 	if _, err := js.PublishMsg(ctx, msg); err != nil {
 		return fmt.Errorf("publish %s: %w", e.Type, err)
 	}
+	recordPublished(ctx, string(e.Type))
 	return nil
 }

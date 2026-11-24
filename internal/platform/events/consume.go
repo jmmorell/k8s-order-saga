@@ -127,6 +127,7 @@ func (c *consumer) handle(ctx context.Context, m jetstream.Msg) {
 	}
 	switch {
 	case err == nil:
+		recordConsumed(ctx, c.spec.Durable, m.Subject(), resultAck)
 		if err := m.Ack(); err != nil {
 			c.log.Error("ack", "error", err, "event_id", e.ID)
 		}
@@ -134,6 +135,7 @@ func (c *consumer) handle(ctx context.Context, m jetstream.Msg) {
 		c.deadLetter(ctx, m, attempt, err)
 	default:
 		delay := c.spec.NakDelays[min(attempt-1, len(c.spec.NakDelays)-1)]
+		recordConsumed(ctx, c.spec.Durable, m.Subject(), resultRetry)
 		c.log.Warn("handler failed, will retry", "error", err, "event_id", e.ID, "attempt", attempt, "delay", delay)
 		if err := m.NakWithDelay(delay); err != nil {
 			c.log.Error("nak", "error", err, "event_id", e.ID)
@@ -171,9 +173,11 @@ func (c *consumer) deadLetter(ctx context.Context, m jetstream.Msg, attempt int,
 	msg.Header.Set("X-Delivery-Count", strconv.Itoa(attempt))
 	if _, err := c.js.PublishMsg(ctx, msg); err != nil {
 		c.log.Error("publish to DLQ failed, will retry", "error", err, "subject", m.Subject(), "attempt", attempt)
+		recordConsumed(ctx, c.spec.Durable, m.Subject(), resultRetry)
 		_ = m.NakWithDelay(c.spec.NakDelays[min(attempt-1, len(c.spec.NakDelays)-1)])
 		return
 	}
+	recordConsumed(ctx, c.spec.Durable, m.Subject(), resultDeadLetter)
 	c.log.Error("message sent to DLQ", "error", cause, "subject", m.Subject(), "attempt", attempt)
 	if err := m.Term(); err != nil {
 		c.log.Error("term", "error", err)

@@ -131,6 +131,7 @@ func (s *Service) HandleInventoryReserved(ctx context.Context, e events.Envelope
 			return err
 		}
 		if created {
+			recordPayment(ctx, "succeeded")
 			s.log.InfoContext(ctx, "payment succeeded", "order_id", e.OrderID.String(),
 				"payment_id", p.ID.String(), "amount_cents", p.AmountCents)
 		} else {
@@ -142,6 +143,7 @@ func (s *Service) HandleInventoryReserved(ctx context.Context, e events.Envelope
 		return err
 	}
 	if created {
+		recordPayment(ctx, "failed")
 		s.log.InfoContext(ctx, "payment failed", "order_id", e.OrderID.String(), "reason", events.ReasonDeclined)
 	} else {
 		s.logRepublished(ctx, e, events.PaymentFailed)

@@ -84,6 +84,7 @@ func (s *Service) HandleOrderCreated(ctx context.Context, e events.Envelope) err
 			return err
 		}
 		if created {
+			recordOperation(ctx, "reserved")
 			s.log.InfoContext(ctx, "stock reserved", "order_id", e.OrderID.String(), "amount_cents", r.AmountCents)
 		} else {
 			s.logRepublished(ctx, e, events.InventoryReserved)
@@ -93,6 +94,7 @@ func (s *Service) HandleOrderCreated(ctx context.Context, e events.Envelope) err
 			return err
 		}
 		if created {
+			recordOperation(ctx, "rejected")
 			s.log.InfoContext(ctx, "stock rejected", "order_id", e.OrderID.String(), "reason", r.Reason, "sku", r.SKU)
 		} else {
 			s.logRepublished(ctx, e, events.InventoryRejected)
@@ -138,6 +140,7 @@ func (s *Service) HandlePaymentFailed(ctx context.Context, e events.Envelope) er
 			return err
 		}
 		if released {
+			recordOperation(ctx, "released")
 			s.log.InfoContext(ctx, "stock released", "order_id", e.OrderID.String())
 		} else {
 			s.logRepublished(ctx, e, events.InventoryReleased)

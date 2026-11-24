@@ -1,4 +1,4 @@
-# ADR 0008: Observability stack: OTel Collector, Tempo, Prometheus and Grafana
+# ADR 0008: Observability stack: OTel Collector, Tempo, Loki, Prometheus and Grafana
 
 ## Status
 
@@ -16,15 +16,15 @@ Day 3 makes the saga observable. The services already emit OpenTelemetry traces,
 - The Collector (contrib distribution, `mode: deployment`) runs `memory_limiter` then `batch` on every pipeline:
   - traces go to Tempo over OTLP/gRPC;
   - metrics go to a `prometheus` exporter on `:8889`, with `resource_to_telemetry_conversion` so `service_name`, `k8s_pod_name` and `k8s_namespace_name` become labels; a ServiceMonitor scrapes it every 15 s;
-  - logs go to the `debug` exporter (verbosity `basic`) until Loki arrives. Without a logs pipeline the Collector would reject the services' log exports, and every service would log export errors forever.
+  - logs go to Loki's native OTLP endpoint (`otlp_http/loki`, `http://loki.observability.svc.cluster.local:3100/otlp`).
 - The services never talk to a backend directly. Backends, credentials, sampling and retries are Collector configuration; the service code and the chart only know one endpoint.
 
-### Tempo, Prometheus and Grafana rather than one SaaS or Cloud Operations
+### Tempo, Loki, Prometheus and Grafana rather than one SaaS or Cloud Operations
 
 - Traces: Tempo single binary, local storage on an `emptyDir`, retention 6 h.
 - Metrics and alerts: kube-prometheus-stack (release `kps`): Prometheus Operator, Prometheus (retention 6 h, `emptyDir`), Alertmanager, Grafana, kube-state-metrics and node-exporter. Prometheus selects every ServiceMonitor, PodMonitor and PrometheusRule in the cluster (`*SelectorNilUsesHelmValues: false`), so other charts can ship their own. Scraping of the controller manager, scheduler, etcd and kube-proxy is off: kind binds them to localhost.
-- Logs: Loki, added later on day 3, behind the same Collector.
-- Grafana is the single UI, with Prometheus, Alertmanager and Tempo (uid `tempo`) as datasources. Its dashboard sidecar loads every ConfigMap labelled `grafana_dashboard: "1"` in any namespace, so dashboards live as code next to what they describe.
+- Logs: Loki single binary (`deploymentMode: Monolithic`, replication 1), filesystem storage (TSDB index, schema v13) on an `emptyDir`, retention 6 h enforced by the compactor, no authentication (one tenant; it is only reachable inside the cluster). The gateway, the chunks and results caches, the canary, the Helm test and the rules sidecar are disabled; the chart (21.x) no longer bundles MinIO.
+- Grafana is the single UI, with Prometheus, Alertmanager, Tempo (uid `tempo`) and Loki (uid `loki`) as datasources. Traces and logs link both ways: the Tempo datasource's `tracesToLogsV2` opens, from any span, the Loki query `{service_name="<service>"} | trace_id="<trace id>"`, and the Loki datasource's derived field `trace_id` opens the trace in Tempo. Its dashboard sidecar loads every ConfigMap labelled `grafana_dashboard: "1"` in any namespace, so dashboards live as code next to what they describe.
 - Why not a SaaS (Grafana Cloud, Datadog, Honeycomb) or Google Cloud Operations from the start: the cluster must work offline and from zero with no account, the whole pipeline should be visible and debuggable, and the open-source stack is what most teams run or at least understand. The cost is memory and moving parts, which a managed backend would remove.
 - Alertmanager mails alerts labelled `team="saga"` to Mailpit (`mailpit.platform.svc.cluster.local:1025`, no TLS, from `alertmanager@example.local` to `oncall@example.local`). Everything else, including the chart's own cluster alerts, goes to a `null` receiver, so the inbox holds only alerts that someone on this project owns.
 - NATS exposes JetStream stream and consumer metrics (DLQ size, consumer pending) through the chart's `prometheus-nats-exporter` sidecar and a PodMonitor.
@@ -37,15 +37,22 @@ Day 3 makes the saga observable. The services already emit OpenTelemetry traces,
 - What is lost: Prometheus' `up` no longer says whether a service is alive, only whether the Collector is. Service liveness comes from Kubernetes (probes, kube-state-metrics) instead. A pod that dies stops pushing and its series go stale after 5 minutes rather than at once. If the Collector is down, metrics from that window are lost (the SDK retries briefly, then drops); the saga itself is unaffected.
 - Infrastructure that already speaks Prometheus (NATS exporter, kube-state-metrics, node-exporter, the kubelet) is still scraped directly.
 
+### Logs over OTLP rather than scraping container stdout
+
+- The services already write JSON logs to stdout (that is what `kubectl logs` and Compose show) and, through the `logx` bridge, send the same records over OTLP. Loki is fed from OTLP only; there is no Promtail, Alloy or Collector `filelog` DaemonSet reading `/var/log/pods`.
+- Why: one pipeline and one endpoint for all three signals; every record arrives already structured, with its resource attributes (`service.name`, `k8s.pod.name`, `k8s.namespace.name`) and the `trace_id` and `span_id` of the context it was logged in, so no parsing rules, no regexes and no relabelling; no DaemonSet with host-path mounts on every node; and the services work the same way against any OTLP backend.
+- Loki maps the OTLP record as follows: `service_name`, `k8s_pod_name` and `k8s_namespace_name` become index labels, the body becomes the log line (`order created`), and the record's attributes plus `trace_id` and `span_id` become structured metadata. Trace ids are therefore filtered with a label filter after the stream selector (`| trace_id="..."`), not with a line filter (`|= "..."`), which is why the Grafana trace-to-logs link uses a custom query.
+- What is lost: anything a process writes outside the logger. A panic stack trace, a crash before the OTLP exporter starts, the Go runtime's own messages, and the logs of the third-party pods (NATS, Postgres, Envoy, the observability stack itself) never reach Loki; they stay in `kubectl logs` only, and only while the container (or its previous instance) exists. Log export is also batched and best-effort: if the Collector or Loki is down, records from that window are dropped after the SDK's short retry, while stdout keeps them. On GKE, Cloud Logging collects container stdout anyway, so the gap closes there; locally, a Collector `filelog` DaemonSet would close it at the cost of a pod per node and parsing rules.
+
 ### The swappable exporter: Cloud Trace and Cloud Monitoring
 
 To send to Google Cloud instead, only the Collector configuration changes:
 
-- add the `googlecloud` exporter for traces (Cloud Trace) and `googlemanagedprometheus` for metrics (Managed Service for Prometheus), both in the contrib distribution;
-- give the Collector's service account Workload Identity with `roles/cloudtrace.agent` and `roles/monitoring.metricWriter`;
-- point the `traces` and `metrics` pipelines at them, and add the `resourcedetection` processor (GCP detector) so spans and metrics carry the cluster and location.
+- add the `googlecloud` exporter for traces (Cloud Trace) and logs (Cloud Logging), and `googlemanagedprometheus` for metrics (Managed Service for Prometheus), all in the contrib distribution;
+- give the Collector's service account Workload Identity with `roles/cloudtrace.agent`, `roles/monitoring.metricWriter` and `roles/logging.logWriter`;
+- point the `traces`, `metrics` and `logs` pipelines at them, and add the `resourcedetection` processor (GCP detector) so spans and metrics carry the cluster and location.
 
-The services, the chart and the `otel.endpoint` value stay the same. Tempo, Prometheus and Grafana can then be removed, or kept side by side during a migration, since the Collector can fan out to both.
+The services, the chart and the `otel.endpoint` value stay the same. Tempo, Loki, Prometheus and Grafana can then be removed, or kept side by side during a migration, since the Collector can fan out to both.
 
 ### Pinned versions and chart repositories
 
@@ -55,11 +62,12 @@ All versions are in `deploy/local/versions.env`. Each chart's images are the cha
 |---|---|---|---|---|
 | kube-prometheus-stack | `kube-prometheus-stack` | `https://prometheus-community.github.io/helm-charts` | 93.9.0 | Prometheus Operator v0.95.2, Prometheus v3.16.0, Grafana 13.3.1 |
 | Tempo | `tempo` | `https://grafana-community.github.io/helm-charts` | 3.2.1 | Tempo 3.1.1 |
+| Loki | `loki` | `https://grafana-community.github.io/helm-charts` | 21.6.0 | Loki 3.7.10 |
 | OpenTelemetry Collector | `opentelemetry-collector` | `https://open-telemetry.github.io/opentelemetry-helm-charts` | 0.183.1 | Collector contrib 0.165.0 |
 | metrics-server | `metrics-server` | `https://kubernetes-sigs.github.io/metrics-server/` | 3.14.0 | metrics-server v0.9.0 |
 | NATS exporter | part of `nats/nats` 2.15.2 | (ADR 0005) | | prometheus-nats-exporter 0.20.2 |
 
-- Grafana's community charts moved from `grafana/helm-charts` to `grafana-community/helm-charts`. The old `grafana/tempo` chart is marked deprecated and stops at Tempo 2.9; the single-binary chart now lives at `grafana-community/tempo`. kube-prometheus-stack already pulls its Grafana subchart from `oci://ghcr.io/grafana-community/helm-charts`.
+- Grafana's community charts moved from `grafana/helm-charts` to `grafana-community/helm-charts`. The old `grafana/tempo` chart is marked deprecated and stops at Tempo 2.9; the single-binary chart now lives at `grafana-community/tempo`. Likewise `grafana/loki` (7.x) is now the Grafana Enterprise Logs chart; the open-source Loki chart is `grafana-community/loki`. kube-prometheus-stack already pulls its Grafana subchart from `oci://ghcr.io/grafana-community/helm-charts`.
 - Collector 0.165 renamed the `otlp` exporter to `otlp_grpc` (and `otlphttp` to `otlp_http`); the values use the new names.
 - `PROMETHEUS_IMAGE` (`quay.io/prometheus/prometheus:v3.16.0`, the same release kube-prometheus-stack deploys) provides `promtool` for rule tests.
 
@@ -72,6 +80,7 @@ The whole cluster, observability included, must stay under 6 GB as reported by `
 | Prometheus | 384Mi | 1Gi |
 | Grafana (+ 2 sidecars) | 192Mi (+ 2 x 48Mi) | 512Mi (+ 2 x 128Mi) |
 | Tempo | 128Mi | 512Mi |
+| Loki | 128Mi | 512Mi |
 | OTel Collector | 96Mi | 256Mi |
 | Alertmanager | 32Mi | 96Mi |
 | Prometheus Operator | 48Mi | 128Mi |
@@ -80,7 +89,7 @@ The whole cluster, observability included, must stay under 6 GB as reported by `
 | metrics-server | 48Mi | 128Mi |
 | NATS exporter | 16Mi | 48Mi |
 
-Measured with `kubectl top nodes` with loadgen running: about 2.7 GB for the whole cluster right after a from-zero `make local-up`, and 3.0 to 3.6 GB after several minutes and two re-runs (Prometheus about 250 MiB, Grafana with its sidecars about 420 MiB, Tempo about 110 MiB, the Collector about 40 MiB).
+Measured with `kubectl top nodes` with loadgen running: about 2.7 GB for the whole cluster right after a from-zero `make local-up`, and 3.0 to 3.6 GB after several minutes and two re-runs (Prometheus about 250 MiB, Grafana with its sidecars about 420 MiB, Tempo about 110 MiB, the Collector about 40 MiB). With Loki added: about 3.7 to 3.9 GB (Loki about 75 MiB, the Collector about 85 MiB once it carries logs).
 
 ## Alternatives considered
 
@@ -93,6 +102,6 @@ Measured with `kubectl top nodes` with loadgen running: about 2.7 GB for the who
 ## Consequences
 
 - One Collector Deployment is a single point of loss for telemetry, not for the saga: with it scaled to 0 orders keep completing and only exporter errors are logged (Review Focus 1).
-- All observability data is in `emptyDir` volumes: a pod restart loses up to 6 h of traces and metrics. That is acceptable for a disposable local cluster; on GKE the backends would be managed or get persistent volumes.
+- All observability data is in `emptyDir` volumes: a pod restart loses up to 6 h of traces, logs and metrics. That is acceptable for a disposable local cluster; on GKE the backends would be managed or get persistent volumes.
 - `local-up.sh` installs the observability stack before the services, so their first spans and metrics are not lost. On a fresh cluster NATS is installed once without its PodMonitor (the CRD does not exist yet) and again after kube-prometheus-stack.
 - Metric names follow the Collector's Prometheus translation: dots become underscores, counters get `_total`, and units become suffixes (`saga_order_duration_seconds_bucket`). Histogram bucket bounds are floats in the `le` label (`le="5.0"`, not `le="5"`). Resource attributes become labels (`service_name`, `k8s_pod_name`); the scrape's `job` is `otel-collector` and the service's own job moves to `exported_job`.

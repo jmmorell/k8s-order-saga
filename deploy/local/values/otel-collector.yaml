@@ -1,6 +1,6 @@
 # OpenTelemetry Collector (contrib distribution) as a single Deployment. The services push
 # OTLP/HTTP to http://otel-collector.observability.svc.cluster.local:4318; the Collector sends
-# traces to Tempo and exposes metrics on :8889 for Prometheus. Values for
+# traces to Tempo and logs to Loki, and exposes metrics on :8889 for Prometheus. Values for
 # open-telemetry/opentelemetry-collector; the image tag is the chart's appVersion.
 fullnameOverride: otel-collector
 mode: deployment
@@ -63,10 +63,10 @@ config:
       endpoint: ${env:MY_POD_IP}:8889
       resource_to_telemetry_conversion:
         enabled: true
-    # Logs stop here until Loki exists (Task 6); without a logs pipeline the Collector would
-    # reject the services' log exports.
-    debug:
-      verbosity: basic
+    # Loki's native OTLP endpoint; the exporter appends /v1/logs. Resource attributes such as
+    # service.name become index labels (service_name), trace_id and span_id structured metadata.
+    otlp_http/loki:
+      endpoint: http://loki.observability.svc.cluster.local:3100/otlp
   service:
     pipelines:
       traces:
@@ -80,4 +80,4 @@ config:
       logs:
         receivers: [otlp]
         processors: [memory_limiter, batch]
-        exporters: [debug]
+        exporters: [otlp_http/loki]

@@ -1,0 +1,63 @@
+# Loki single binary with filesystem storage on an emptyDir: logs live 6 h and do not survive a pod
+# restart. Values for grafana-community/loki; the image tag is the chart's appVersion. Only the
+# Collector writes to it, over OTLP/HTTP at http://loki.observability.svc.cluster.local:3100/otlp.
+fullnameOverride: loki
+deploymentMode: Monolithic
+
+loki:
+  # One tenant, no X-Scope-OrgID: nothing outside the cluster can reach it (port-forward only).
+  auth_enabled: false
+  commonConfig:
+    replication_factor: 1
+  storage:
+    type: filesystem
+  schemaConfig:
+    configs:
+      - from: "2024-04-01"
+        store: tsdb
+        object_store: filesystem
+        schema: v13
+        index:
+          prefix: index_
+          period: 24h
+  limits_config:
+    retention_period: 6h
+    # OTLP log attributes, trace_id and span_id are kept as structured metadata.
+    allow_structured_metadata: true
+  compactor:
+    retention_enabled: true
+    delete_request_store: filesystem
+  analytics:
+    reporting_enabled: false
+
+singleBinary:
+  replicas: 1
+  # The rules sidecar loads Loki alerting rules from ConfigMaps; there are none.
+  sidecar: false
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {cpu: 500m, memory: 512Mi}
+  persistence:
+    enabled: false
+    # The volume mounted at /var/loki when persistence is off.
+    dataVolumeParameters:
+      emptyDir:
+        sizeLimit: 2Gi
+
+# Everything a single binary on one node does not need.
+gateway:
+  enabled: false
+chunksCache:
+  enabled: false
+resultsCache:
+  enabled: false
+lokiCanary:
+  enabled: false
+test:
+  enabled: false
+read:
+  replicas: 0
+write:
+  replicas: 0
+backend:
+  replicas: 0

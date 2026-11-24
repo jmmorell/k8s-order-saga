@@ -137,6 +137,9 @@ install_observability() {
   helm repo add grafana-community https://grafana-community.github.io/helm-charts --force-update >/dev/null
   helm upgrade --install tempo grafana-community/tempo --version "$TEMPO_CHART_VERSION" \
     --kube-context "$CTX" -n observability -f deploy/local/values/tempo.yaml
+  echo "==> installing loki chart $LOKI_CHART_VERSION"
+  helm upgrade --install loki grafana-community/loki --version "$LOKI_CHART_VERSION" \
+    --kube-context "$CTX" -n observability -f deploy/local/values/loki.yaml
   echo "==> installing opentelemetry-collector chart $OTEL_COLLECTOR_CHART_VERSION"
   helm repo add open-telemetry https://open-telemetry.github.io/opentelemetry-helm-charts --force-update >/dev/null
   helm upgrade --install otel-collector open-telemetry/opentelemetry-collector \
@@ -151,6 +154,7 @@ install_observability() {
   done
   "${K[@]}" -n observability rollout status daemonset/kps-prometheus-node-exporter --timeout=180s
   "${K[@]}" -n observability rollout status statefulset/tempo --timeout=180s
+  "${K[@]}" -n observability rollout status statefulset/loki --timeout=180s
   # The operator creates these StatefulSets asynchronously; wait on the custom resources instead.
   "${K[@]}" -n observability wait --for=condition=Available prometheus/kps-prometheus --timeout=300s
   "${K[@]}" -n observability wait --for=condition=Available alertmanager/kps-alertmanager --timeout=300s

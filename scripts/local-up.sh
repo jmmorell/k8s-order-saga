@@ -155,6 +155,11 @@ install_observability() {
   "${K[@]}" -n observability wait --for=condition=Available prometheus/kps-prometheus --timeout=300s
   "${K[@]}" -n observability wait --for=condition=Available alertmanager/kps-alertmanager --timeout=300s
   "${K[@]}" -n platform rollout status statefulset/nats --timeout=180s
+
+  # Needs the PrometheusRule CRD from kube-prometheus-stack, installed above.
+  echo "==> installing saga-observability chart (dashboard, SLO, alerts)"
+  helm upgrade --install saga-observability charts/saga-observability \
+    --kube-context "$CTX" -n observability
 }
 
 install_gateway() {
@@ -222,4 +227,4 @@ wait_services
 echo "==> local cluster ready (context $CTX)"
 echo "orders: http://localhost:8080/orders"
 echo "next:   make local-smoke | make local-status | make local-dlq | make local-reload"
-echo "        make grafana | make prom | make alerts"
+echo "        make grafana | make prom | make alerts | make obs-check"

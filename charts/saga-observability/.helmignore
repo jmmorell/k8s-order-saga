@@ -1,0 +1,2 @@
+# The promtool tests are not part of the release.
+rules/*.test.yaml

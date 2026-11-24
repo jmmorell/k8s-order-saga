@@ -1,0 +1,4 @@
+# Labels that make the Grafana sidecar of kube-prometheus-stack load the dashboard ConfigMaps
+# (grafana.sidecar.dashboards.label/labelValue in deploy/local/values/kube-prometheus-stack.yaml).
+dashboardLabels:
+  grafana_dashboard: "1"

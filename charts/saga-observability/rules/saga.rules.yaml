@@ -1,0 +1,74 @@
+# Saga SLO and alerts. A plain Prometheus rule file: promtool tests these exact bytes
+# (saga.rules.test.yaml) and templates/prometheusrule.yaml ships them as a PrometheusRule.
+#
+# SLO: 99 % of orders reach a final state (CONFIRMED or CANCELLED) within 5 s.
+# Error budget 1 %; multi-window burn-rate alerts after the Google SRE workbook.
+#
+# Every saga series carries per-pod resource labels from the Collector, so every rule
+# aggregates them away. Histogram bounds are floats: the 5 s bucket is le="5.0".
+# Keep each expr on one line: scripts/obs-check.sh reads them without a YAML parser.
+groups:
+  - name: saga.slo
+    rules:
+      # Share of orders that reached a final state within 5 s. '> 0' on the denominator keeps
+      # a window without orders from recording 0/0 = NaN: no traffic means no SLO series.
+      - record: saga:slo_good_ratio:rate5m
+        expr: sum(rate(saga_order_duration_seconds_bucket{le="5.0"}[5m])) / (sum(rate(saga_order_duration_seconds_count[5m])) > 0)
+      - record: saga:slo_good_ratio:rate30m
+        expr: sum(rate(saga_order_duration_seconds_bucket{le="5.0"}[30m])) / (sum(rate(saga_order_duration_seconds_count[30m])) > 0)
+      - record: saga:slo_good_ratio:rate1h
+        expr: sum(rate(saga_order_duration_seconds_bucket{le="5.0"}[1h])) / (sum(rate(saga_order_duration_seconds_count[1h])) > 0)
+      - record: saga:slo_good_ratio:rate6h
+        expr: sum(rate(saga_order_duration_seconds_bucket{le="5.0"}[6h])) / (sum(rate(saga_order_duration_seconds_count[6h])) > 0)
+      # A confirmed order has no reason label (the empty attribute is dropped).
+      - record: saga:orders_completed:rate5m
+        expr: sum by (status, reason) (rate(saga_orders_completed_total[5m]))
+
+      # 14.4x the budget burns 2 % of a 30-day budget in 1 h.
+      - alert: SagaSLOFastBurn
+        expr: (1 - saga:slo_good_ratio:rate1h) > 14.4 * 0.01 and (1 - saga:slo_good_ratio:rate5m) > 14.4 * 0.01
+        for: 2m
+        labels:
+          severity: critical
+          team: saga
+        annotations:
+          summary: "Order SLO (99% final within 5 s) is burning error budget over 14.4x (1h and 5m windows)"
+      # 6x the budget burns 5 % of a 30-day budget in 6 h.
+      - alert: SagaSLOSlowBurn
+        expr: (1 - saga:slo_good_ratio:rate6h) > 6 * 0.01 and (1 - saga:slo_good_ratio:rate30m) > 6 * 0.01
+        for: 15m
+        labels:
+          severity: warning
+          team: saga
+        annotations:
+          summary: "Order SLO (99% final within 5 s) is burning error budget over 6x (6h and 30m windows)"
+
+  - name: saga.alerts
+    rules:
+      - alert: PaymentErrorRateHigh
+        expr: sum(rate(saga_payments_total{result="failed"}[5m])) / sum(rate(saga_payments_total[5m])) > 0.25
+        for: 5m
+        labels:
+          severity: warning
+          team: saga
+        annotations:
+          summary: "{{ $value | humanizePercentage }} of payments failed over the last 5 minutes (threshold 25%)"
+      # The SDK exports no zero for an attribute set it has not seen, so a pod's first dead
+      # letter makes its series appear already at 1, which increase() cannot see. The second
+      # term catches such a series: non-zero now, absent 10 minutes ago.
+      - alert: EventsDeadLettered
+        expr: sum(increase(saga_events_consumed_total{result="dead_letter"}[10m])) > 0 or count((saga_events_consumed_total{result="dead_letter"} > 0) unless on (k8s_pod_name, durable, subject) (saga_events_consumed_total{result="dead_letter"} offset 10m)) > 0
+        labels:
+          severity: warning
+          team: saga
+        annotations:
+          summary: "Events were dead-lettered in the last 10 minutes; inspect the DLQ stream"
+      # Both orders replicas run the stuck-PENDING query and report the same count: max, not sum.
+      - alert: OrdersStuckPending
+        expr: max(saga_orders_stuck_pending) > 0
+        for: 2m
+        labels:
+          severity: critical
+          team: saga
+        annotations:
+          summary: "{{ $value }} order(s) stuck in PENDING"

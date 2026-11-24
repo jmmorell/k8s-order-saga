@@ -12,6 +12,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/jmmorell/k8s-order-saga/internal/platform/events"
 )
@@ -64,8 +67,22 @@ func newRootMux(health, api http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/healthz", health)
 	mux.Handle("/readyz", health)
-	mux.Handle("/", api)
+	mux.Handle("/", traced(api))
 	return mux
+}
+
+// traced records a server span per API request, named after the route the
+// inner mux matched. otelhttp renames the span once the handler returns, when
+// r.Pattern is known; before that (and on a 404) the root pattern "/" gives
+// way to the method alone.
+func traced(api http.Handler) http.Handler {
+	return otelhttp.NewHandler(api, "orders",
+		otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
+			if r.Pattern == "" || r.Pattern == "/" {
+				return r.Method
+			}
+			return r.Pattern
+		}))
 }
 
 // Routes returns the API routes.
@@ -104,6 +121,7 @@ func (s *Service) create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id := uuid.New()
+	trace.SpanFromContext(r.Context()).SetAttributes(attribute.String("order.id", id.String()))
 	items, err := json.Marshal(req.Items)
 	if err != nil {
 		s.fail(r.Context(), w, "marshal items", err)
@@ -148,6 +166,7 @@ func (s *Service) get(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "id must be a UUID")
 		return
 	}
+	trace.SpanFromContext(r.Context()).SetAttributes(attribute.String("order.id", id.String()))
 	var (
 		o      Order
 		reason *string

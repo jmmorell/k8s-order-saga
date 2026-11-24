@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +19,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
 	"github.com/jmmorell/k8s-order-saga/internal/inventory"
 	"github.com/jmmorell/k8s-order-saga/internal/notifications"
@@ -26,6 +31,15 @@ import (
 	"github.com/jmmorell/k8s-order-saga/internal/platform/pgutil"
 	"github.com/jmmorell/k8s-order-saga/internal/platform/testinfra"
 )
+
+var spans = tracetest.NewInMemoryExporter()
+
+func TestMain(m *testing.M) {
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(spans))
+	otel.SetTracerProvider(tp)
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+	os.Exit(m.Run())
+}
 
 const (
 	finalTimeout = 15 * time.Second
@@ -244,4 +258,50 @@ func TestSaga_PaymentFailureCompensates(t *testing.T) {
 			`SELECT status FROM reservations WHERE order_id = $1`, id).Scan(&status)
 		return err == nil && status == "RELEASED" && stock(t, invDB, "SKU-002") == 1000
 	}, finalTimeout, pollEvery, "stock for %s was never released", id)
+}
+
+func TestSaga_OneTraceAcrossServices(t *testing.T) {
+	ordersURL, mailpit, _ := startStack(t, 0)
+	id := postOrder(t, ordersURL, "trace@example.local", "SKU-001", 1)
+	require.Equal(t, "CONFIRMED", awaitFinal(t, ordersURL, id).Status)
+	requireMail(t, mailpit, "trace@example.local", fmt.Sprintf("Order %s confirmed", id))
+
+	// The syncer exports on span end; the last consumer span ends after the
+	// email is sent, so poll briefly.
+	want := []string{"process orders.created", "process inventory.reserved",
+		"process payments.succeeded", "process orders.confirmed"}
+	var server tracetest.SpanStub
+	var orderSpans []tracetest.SpanStub
+	require.Eventually(t, func() bool {
+		server, orderSpans = tracetest.SpanStub{}, nil
+		names := map[string]bool{}
+		for _, s := range spans.GetSpans() {
+			for _, a := range s.Attributes {
+				if a.Key == "order.id" && a.Value.AsString() == id.String() {
+					orderSpans = append(orderSpans, s)
+					names[s.Name] = true
+					if s.Name == "POST /orders" {
+						server = s
+					}
+				}
+			}
+		}
+		for _, n := range want {
+			if !names[n] {
+				return false
+			}
+		}
+		return server.Name != ""
+	}, 5*time.Second, pollEvery, "missing spans for order %s", id)
+
+	for _, s := range orderSpans {
+		if s.Name == "GET /orders/{id}" {
+			continue // status polls by the test are separate traces
+		}
+		require.Equal(t, server.SpanContext.TraceID(), s.SpanContext.TraceID(), "span %q is in another trace", s.Name)
+	}
+	for _, s := range spans.GetSpans() {
+		require.NotContains(t, s.Name, "/healthz")
+		require.NotContains(t, s.Name, "/readyz")
+	}
 }

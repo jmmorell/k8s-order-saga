@@ -16,6 +16,8 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+
 	"github.com/jmmorell/k8s-order-saga/internal/platform/httpx"
 )
 
@@ -83,7 +85,7 @@ func Run(ctx context.Context, cfg Config, log *slog.Logger) error {
 		return err
 	}
 	url := strings.TrimRight(cfg.TargetURL, "/") + "/orders"
-	client := &http.Client{Timeout: requestTimeout}
+	client := &http.Client{Timeout: requestTimeout, Transport: otelhttp.NewTransport(http.DefaultTransport)}
 	r := rand.New(rand.NewPCG(rand.Uint64(), rand.Uint64()))
 	tally := &counts{m: map[int]int{}}
 

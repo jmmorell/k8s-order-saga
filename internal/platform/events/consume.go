@@ -12,6 +12,10 @@ import (
 
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const (
@@ -91,13 +95,36 @@ func (c *consumer) handle(ctx context.Context, m jetstream.Msg) {
 	}
 	attempt := int(meta.NumDelivered)
 
+	// A message without trace context starts a new root trace.
+	ctx = otel.GetTextMapPropagator().Extract(ctx, headerCarrier(m.Headers()))
+	ctx, span := tracer().Start(ctx, "process "+m.Subject(),
+		trace.WithSpanKind(trace.SpanKindConsumer),
+		trace.WithAttributes(
+			attribute.String("messaging.system", "nats"),
+			attribute.String("messaging.destination.name", m.Subject()),
+			attribute.String("messaging.consumer.group.name", c.spec.Durable),
+			attribute.Int("messaging.nats.delivery_attempt", attempt),
+		))
+	defer span.End()
+
 	var e Envelope
 	if err := json.Unmarshal(m.Data(), &e); err != nil {
-		c.deadLetter(ctx, m, attempt, fmt.Errorf("invalid envelope: %w", err))
+		err = fmt.Errorf("invalid envelope: %w", err)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		c.deadLetter(ctx, m, attempt, err)
 		return
 	}
+	span.SetAttributes(
+		attribute.String("messaging.message.id", e.ID.String()),
+		attribute.String("order.id", e.OrderID.String()),
+	)
 
 	err = c.call(ctx, e)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+	}
 	switch {
 	case err == nil:
 		if err := m.Ack(); err != nil {
@@ -133,6 +160,11 @@ func (c *consumer) deadLetter(ctx context.Context, m jetstream.Msg, attempt int,
 		Subject: "dlq." + c.spec.Durable + "." + m.Subject(),
 		Data:    m.Data(),
 		Header:  nats.Header{},
+	}
+	for _, k := range []string{"traceparent", "tracestate"} {
+		if v := m.Headers().Get(k); v != "" {
+			msg.Header.Set(k, v)
+		}
 	}
 	msg.Header.Set("X-Error", cause.Error())
 	msg.Header.Set("X-Original-Subject", m.Subject())

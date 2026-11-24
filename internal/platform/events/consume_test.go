@@ -24,7 +24,7 @@ func setup(t *testing.T) (*nats.Conn, jetstream.JetStream) {
 	if testing.Short() {
 		t.Skip()
 	}
-	nc, js, err := events.Connect(testinfra.NATS(t), "test")
+	nc, js, err := events.Connect(context.Background(), testinfra.NATS(t), "test")
 	require.NoError(t, err)
 	t.Cleanup(nc.Close)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -204,5 +204,41 @@ func TestConsume_FailedDLQPublishIsRetriedNotLost(t *testing.T) {
 		require.Equal(t, "orders.created", m.Headers().Get("X-Original-Subject"))
 	case <-time.After(10 * time.Second):
 		t.Fatal("message was lost after DLQ publish failure")
+	}
+}
+
+func TestConsume_PanickingHandlerGoesToDLQAndDoesNotCrash(t *testing.T) {
+	_, js := setup(t)
+	dlq := dlqMessages(t, js, "dlq.test.orders.created")
+	orderA, orderB := uuid.New(), uuid.New()
+
+	handledB := make(chan struct{})
+	var once sync.Once
+	startConsumer(t, js, events.ConsumerSpec{
+		Stream: "ORDERS", Durable: "test", Subjects: []events.Subject{events.OrderCreated},
+		MaxDeliver: 2, NakDelays: []time.Duration{50 * time.Millisecond},
+	}, func(_ context.Context, e events.Envelope) error {
+		if e.OrderID == orderA {
+			panic("kaboom")
+		}
+		once.Do(func() { close(handledB) })
+		return nil
+	})
+
+	publishCreated(t, js, orderA)
+	publishCreated(t, js, orderB)
+
+	select {
+	case <-handledB:
+	case <-time.After(10 * time.Second):
+		t.Fatal("order B was blocked by the panicking handler")
+	}
+	select {
+	case m := <-dlq:
+		require.Equal(t, "2", m.Headers().Get("X-Delivery-Count"))
+		require.Contains(t, m.Headers().Get("X-Error"), "kaboom")
+		require.Contains(t, string(m.Data()), orderA.String())
+	case <-time.After(10 * time.Second):
+		t.Fatal("no DLQ message")
 	}
 }

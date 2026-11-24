@@ -1,0 +1,7 @@
+image:
+  repository: k8s-order-saga/notifications
+  tag: dev
+
+env:
+  NATS_URL: nats://nats.platform.svc.cluster.local:4222
+  SMTP_ADDR: mailpit.platform.svc.cluster.local:1025

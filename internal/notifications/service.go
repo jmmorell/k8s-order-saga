@@ -67,7 +67,7 @@ func (s *Service) Handle(ctx context.Context, e events.Envelope) error {
 
 // Run starts the service and blocks until ctx ends.
 func Run(ctx context.Context, cfg Config, log *slog.Logger) error {
-	nc, js, err := events.Connect(cfg.NATSURL, "notifications")
+	nc, js, err := events.Connect(ctx, cfg.NATSURL, "notifications")
 	if err != nil {
 		return err
 	}

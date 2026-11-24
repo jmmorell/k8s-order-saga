@@ -135,7 +135,7 @@ func TestRun_EmailsConfirmedOrder(t *testing.T) {
 		}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	}()
 
-	nc, js, err := events.Connect(natsURL, "test")
+	nc, js, err := events.Connect(context.Background(), natsURL, "test")
 	require.NoError(t, err)
 	defer nc.Close()
 	// Run creates the streams; wait for them before publishing.

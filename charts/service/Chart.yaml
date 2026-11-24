@@ -1,0 +1,6 @@
+apiVersion: v2
+name: service
+description: Generic chart for one Go service of the order saga; the release name is the service name.
+type: application
+version: 0.1.0
+appVersion: "dev"

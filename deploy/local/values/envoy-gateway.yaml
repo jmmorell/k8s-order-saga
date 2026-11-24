@@ -1,0 +1,11 @@
+# Values for the gateway-helm chart (Envoy Gateway controller). The chart default has a memory
+# limit but no CPU limit; the proxy's own resources are set in deploy/local/gateway/envoyproxy.yaml.
+deployment:
+  envoyGateway:
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi

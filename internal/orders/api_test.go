@@ -38,7 +38,7 @@ func setup(t *testing.T) env {
 	t.Cleanup(pool.Close)
 	require.NoError(t, pgutil.Migrate(ctx, pool, orders.Migrations()))
 
-	nc, js, err := events.Connect(testinfra.NATS(t), "test")
+	nc, js, err := events.Connect(context.Background(), testinfra.NATS(t), "test")
 	require.NoError(t, err)
 	t.Cleanup(nc.Close)
 	require.NoError(t, events.EnsureStreams(ctx, js))
@@ -137,7 +137,7 @@ func TestCreate_Valid202AndEventPublished(t *testing.T) {
 
 func TestCreate_NATSDownReturns503AndRemovesOrder(t *testing.T) {
 	e := setup(t)
-	nc, js, err := events.Connect(testinfra.NATS(t), "closed")
+	nc, js, err := events.Connect(context.Background(), testinfra.NATS(t), "closed")
 	require.NoError(t, err)
 	nc.Close()
 	svc := orders.NewService(e.pool, js, slog.New(slog.DiscardHandler))
@@ -151,7 +151,7 @@ func TestCreate_NATSDownReturns503AndRemovesOrder(t *testing.T) {
 func TestCreate_NATSDisconnectedReturns503AndNothingIsPublishedAfterReconnect(t *testing.T) {
 	e := setup(t)
 	url, proxy := testinfra.NATSBehindProxy(t)
-	nc, js, err := events.Connect(url, "disconnected")
+	nc, js, err := events.Connect(context.Background(), url, "disconnected")
 	require.NoError(t, err)
 	t.Cleanup(nc.Close)
 	require.NoError(t, events.EnsureStreams(context.Background(), js))

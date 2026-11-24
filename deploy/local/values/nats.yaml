@@ -1,0 +1,34 @@
+# Single-node NATS with JetStream on a 1Gi PVC. Values for the official nats/nats chart.
+fullnameOverride: nats
+
+config:
+  cluster:
+    enabled: false
+  jetstream:
+    enabled: true
+    fileStore:
+      enabled: true
+      pvc:
+        enabled: true
+        size: 1Gi
+  monitor:
+    enabled: true
+    port: 8222
+
+container:
+  merge:
+    resources:
+      requests: {cpu: 50m, memory: 64Mi}
+      limits: {cpu: 250m, memory: 192Mi}
+
+reloader:
+  merge:
+    resources:
+      requests: {cpu: 10m, memory: 16Mi}
+      limits: {cpu: 50m, memory: 32Mi}
+
+podDisruptionBudget:
+  enabled: false
+
+natsBox:
+  enabled: false

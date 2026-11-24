@@ -1,0 +1,26 @@
+image:
+  repository: "" # required; set in the values file of each service
+  tag: dev
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+port: 8080
+
+service:
+  enabled: true
+
+# name -> string value. Rendered after secretEnv, so values may use $(NAME).
+env: {}
+
+# list of { name, secretName, key }
+secretEnv: []
+
+resources:
+  requests:
+    cpu: 25m
+    memory: 32Mi
+  limits:
+    cpu: 250m
+    memory: 128Mi
+
+terminationGracePeriodSeconds: 30

@@ -9,5 +9,6 @@ RUN test -n "${SERVICE}" && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o
 
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/app /app
-USER nonroot:nonroot
+# Numeric, so Kubernetes can verify runAsNonRoot (65532 is distroless "nonroot").
+USER 65532:65532
 ENTRYPOINT ["/app"]

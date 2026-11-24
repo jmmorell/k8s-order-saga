@@ -1,0 +1,14 @@
+replicaCount: 2
+
+image:
+  repository: k8s-order-saga/orders
+  tag: dev
+
+secretEnv:
+  - name: POSTGRES_PASSWORD
+    secretName: postgres
+    key: password
+
+env:
+  DATABASE_URL: postgres://postgres:$(POSTGRES_PASSWORD)@postgres.platform.svc.cluster.local:5432/orders?sslmode=disable
+  NATS_URL: nats://nats.platform.svc.cluster.local:4222

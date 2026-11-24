@@ -1,3 +1,5 @@
+name: k8s-order-saga
+
 x-service: &service
   restart: unless-stopped
   read_only: true

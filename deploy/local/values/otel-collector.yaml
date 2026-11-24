@@ -1,0 +1,83 @@
+# OpenTelemetry Collector (contrib distribution) as a single Deployment. The services push
+# OTLP/HTTP to http://otel-collector.observability.svc.cluster.local:4318; the Collector sends
+# traces to Tempo and exposes metrics on :8889 for Prometheus. Values for
+# open-telemetry/opentelemetry-collector; the image tag is the chart's appVersion.
+fullnameOverride: otel-collector
+mode: deployment
+
+image:
+  repository: otel/opentelemetry-collector-contrib
+
+resources:
+  requests: {cpu: 50m, memory: 96Mi}
+  limits: {cpu: 500m, memory: 256Mi}
+
+ports:
+  otlp:
+    enabled: false
+  otlp-http:
+    enabled: true
+  jaeger-compact:
+    enabled: false
+  jaeger-thrift:
+    enabled: false
+  jaeger-grpc:
+    enabled: false
+  zipkin:
+    enabled: false
+  prom-exporter:
+    enabled: true
+    containerPort: 8889
+    servicePort: 8889
+    protocol: TCP
+
+serviceMonitor:
+  enabled: true
+  metricsEndpoints:
+    - port: prom-exporter
+      interval: 15s
+
+config:
+  receivers:
+    # Replaces the chart's default receivers: OTLP over HTTP only.
+    jaeger: null
+    zipkin: null
+    prometheus: null
+    otlp:
+      protocols:
+        grpc: null
+        http:
+          endpoint: ${env:MY_POD_IP}:4318
+  processors:
+    memory_limiter:
+      check_interval: 1s
+      limit_percentage: 80
+      spike_limit_percentage: 25
+    batch: {}
+  exporters:
+    otlp_grpc/tempo:
+      endpoint: tempo.observability.svc.cluster.local:4317
+      tls:
+        insecure: true
+    prometheus:
+      endpoint: ${env:MY_POD_IP}:8889
+      resource_to_telemetry_conversion:
+        enabled: true
+    # Logs stop here until Loki exists (Task 6); without a logs pipeline the Collector would
+    # reject the services' log exports.
+    debug:
+      verbosity: basic
+  service:
+    pipelines:
+      traces:
+        receivers: [otlp]
+        processors: [memory_limiter, batch]
+        exporters: [otlp_grpc/tempo]
+      metrics:
+        receivers: [otlp]
+        processors: [memory_limiter, batch]
+        exporters: [prometheus]
+      logs:
+        receivers: [otlp]
+        processors: [memory_limiter, batch]
+        exporters: [debug]

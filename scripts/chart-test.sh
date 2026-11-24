@@ -34,6 +34,26 @@ for svc in $services; do
     "kind: Service" "kind: ServiceAccount" "- name: HTTP_ADDR"; do
     expect "$svc" "$s" "$out"
   done
+
+  # The local values point every service at the Collector.
+  for s in "- name: POD_NAME" "fieldPath: metadata.name" "- name: POD_NAMESPACE" \
+    "fieldPath: metadata.namespace" "- name: OTEL_EXPORTER_OTLP_ENDPOINT" \
+    'value: "http://otel-collector.observability.svc.cluster.local:4318"' \
+    "- name: OTEL_SERVICE_NAME" "value: \"$svc\"" \
+    'value: "k8s.pod.name=$(POD_NAME),k8s.namespace.name=$(POD_NAMESPACE)"' \
+    "- name: OTEL_METRIC_EXPORT_INTERVAL" 'value: "15000"'; do
+    expect "$svc" "$s" "$out"
+  done
+  pod=$(awk '/- name: POD_NAME$/ {print NR; exit}' <<<"$out")
+  attrs=$(awk '/- name: OTEL_RESOURCE_ATTRIBUTES/ {print NR; exit}' <<<"$out")
+  [ -n "$pod" ] && [ -n "$attrs" ] || fail "$svc: POD_NAME or OTEL_RESOURCE_ATTRIBUTES env entry missing"
+  [ "$pod" -lt "$attrs" ] || fail "$svc: POD_NAME must be listed before OTEL_RESOURCE_ATTRIBUTES"
+done
+
+# Without otel.endpoint nothing OpenTelemetry-related is rendered.
+plain=$(render orders --set otel.endpoint=)
+for s in OTEL_ POD_NAME POD_NAMESPACE; do
+  if grep -qF -- "$s" <<<"$plain"; then fail "orders: '$s' rendered with an empty otel.endpoint"; fi
 done
 
 orders=$(render orders)

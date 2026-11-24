@@ -15,6 +15,11 @@ env: {}
 # list of { name, secretName, key }
 secretEnv: []
 
+# OTLP/HTTP endpoint of the OpenTelemetry Collector. When set, the container gets the OTEL_*
+# variables plus POD_NAME and POD_NAMESPACE; when empty, the service exports nothing.
+otel:
+  endpoint: ""
+
 resources:
   requests:
     cpu: 25m

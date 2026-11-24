@@ -1,0 +1,8 @@
+# metrics-server for 'kubectl top', installed in kube-system. Values for metrics-server/metrics-server.
+# kind's kubelets serve self-signed certificates, so metrics-server skips their verification.
+args:
+  - --kubelet-insecure-tls
+
+resources:
+  requests: {cpu: 20m, memory: 48Mi}
+  limits: {cpu: 200m, memory: 128Mi}

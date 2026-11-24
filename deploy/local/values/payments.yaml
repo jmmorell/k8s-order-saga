@@ -14,3 +14,6 @@ env:
   NATS_URL: nats://nats.platform.svc.cluster.local:4222
   PAYMENT_FAILURE_RATE: "0.1"
   PAYMENT_LATENCY_MS: "200"
+
+otel:
+  endpoint: http://otel-collector.observability.svc.cluster.local:4318

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Creates the kind cluster and installs NATS, Postgres, Mailpit, Envoy Gateway and the five
-# services. Safe to re-run. 'local-up.sh reload' only rebuilds and restarts the services.
+# Creates the kind cluster and installs NATS, Postgres, Mailpit, the observability stack, Envoy
+# Gateway and the five services. Safe to re-run. 'local-up.sh reload' only rebuilds and restarts the services.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -48,7 +48,7 @@ apply_namespaces() {
 }
 
 # Creates Secret postgres (key password) in platform and shop; never prints the password.
-ensure_secrets() {
+ensure_postgres_secret() {
   echo "==> ensuring postgres secret"
   local password
   local have_platform=false have_shop=false
@@ -71,6 +71,33 @@ ensure_secrets() {
   fi
 }
 
+# Creates Secret grafana-admin (keys admin-user, admin-password) in observability, only if it is
+# absent; never prints the password.
+ensure_grafana_secret() {
+  echo "==> ensuring grafana-admin secret"
+  "${K[@]}" -n observability get secret grafana-admin >/dev/null 2>&1 && return
+  "${K[@]}" -n observability create secret generic grafana-admin \
+    --from-literal=admin-user=admin --from-literal=admin-password="$(openssl rand -hex 16)" >/dev/null
+}
+
+ensure_secrets() {
+  ensure_postgres_secret
+  ensure_grafana_secret
+}
+
+# The NATS PodMonitor needs the Prometheus Operator CRDs, which kube-prometheus-stack installs
+# after the platform. Until they exist NATS is installed without it, and install_observability
+# installs NATS again once they do.
+install_nats() {
+  local podmonitor=false
+  "${K[@]}" get crd podmonitors.monitoring.coreos.com >/dev/null 2>&1 && podmonitor=true
+  echo "==> installing nats chart $NATS_CHART_VERSION (PodMonitor: $podmonitor)"
+  helm repo add nats https://nats-io.github.io/k8s/helm/charts/ --force-update >/dev/null
+  helm upgrade --install nats nats/nats --version "$NATS_CHART_VERSION" \
+    --kube-context "$CTX" -n platform -f deploy/local/values/nats.yaml \
+    --set promExporter.podMonitor.enabled="$podmonitor"
+}
+
 install_platform() {
   echo "==> installing postgres and mailpit"
   # serviceName is immutable: a cluster from before postgres-headless existed needs the
@@ -80,10 +107,7 @@ install_platform() {
     "${K[@]}" -n platform delete statefulset postgres --cascade=orphan
   fi
   "${K[@]}" apply -f deploy/local/platform/postgres.yaml -f deploy/local/platform/mailpit.yaml
-  echo "==> installing nats chart $NATS_CHART_VERSION"
-  helm repo add nats https://nats-io.github.io/k8s/helm/charts/ --force-update >/dev/null
-  helm upgrade --install nats nats/nats --version "$NATS_CHART_VERSION" \
-    --kube-context "$CTX" -n platform -f deploy/local/values/nats.yaml
+  install_nats
 }
 
 wait_platform() {
@@ -91,6 +115,46 @@ wait_platform() {
   "${K[@]}" -n platform rollout status statefulset/postgres --timeout=180s
   "${K[@]}" -n platform rollout status statefulset/nats --timeout=180s
   "${K[@]}" -n platform rollout status deployment/mailpit --timeout=180s
+}
+
+# Runs before the services are installed, so their first spans and metrics have somewhere to go.
+# The namespace itself comes from apply_namespaces (ensure_grafana_secret needs it earlier).
+install_observability() {
+  echo "==> installing metrics-server chart $METRICS_SERVER_CHART_VERSION"
+  helm repo add metrics-server https://kubernetes-sigs.github.io/metrics-server/ --force-update >/dev/null
+  helm upgrade --install metrics-server metrics-server/metrics-server \
+    --version "$METRICS_SERVER_CHART_VERSION" --kube-context "$CTX" -n kube-system \
+    -f deploy/local/values/metrics-server.yaml
+  echo "==> installing kube-prometheus-stack chart $KUBE_PROMETHEUS_STACK_VERSION"
+  helm repo add prometheus-community https://prometheus-community.github.io/helm-charts --force-update >/dev/null
+  helm upgrade --install kps prometheus-community/kube-prometheus-stack \
+    --version "$KUBE_PROMETHEUS_STACK_VERSION" --kube-context "$CTX" -n observability \
+    -f deploy/local/values/kube-prometheus-stack.yaml
+  if ! "${K[@]}" -n platform get podmonitor nats >/dev/null 2>&1; then
+    install_nats
+  fi
+  echo "==> installing tempo chart $TEMPO_CHART_VERSION"
+  helm repo add grafana-community https://grafana-community.github.io/helm-charts --force-update >/dev/null
+  helm upgrade --install tempo grafana-community/tempo --version "$TEMPO_CHART_VERSION" \
+    --kube-context "$CTX" -n observability -f deploy/local/values/tempo.yaml
+  echo "==> installing opentelemetry-collector chart $OTEL_COLLECTOR_CHART_VERSION"
+  helm repo add open-telemetry https://open-telemetry.github.io/opentelemetry-helm-charts --force-update >/dev/null
+  helm upgrade --install otel-collector open-telemetry/opentelemetry-collector \
+    --version "$OTEL_COLLECTOR_CHART_VERSION" --kube-context "$CTX" -n observability \
+    -f deploy/local/values/otel-collector.yaml
+
+  echo "==> waiting for the observability stack"
+  "${K[@]}" -n kube-system rollout status deployment/metrics-server --timeout=180s
+  local d
+  for d in kps-operator kps-kube-state-metrics kps-grafana otel-collector; do
+    "${K[@]}" -n observability rollout status "deployment/$d" --timeout=300s
+  done
+  "${K[@]}" -n observability rollout status daemonset/kps-prometheus-node-exporter --timeout=180s
+  "${K[@]}" -n observability rollout status statefulset/tempo --timeout=180s
+  # The operator creates these StatefulSets asynchronously; wait on the custom resources instead.
+  "${K[@]}" -n observability wait --for=condition=Available prometheus/kps-prometheus --timeout=300s
+  "${K[@]}" -n observability wait --for=condition=Available alertmanager/kps-alertmanager --timeout=300s
+  "${K[@]}" -n platform rollout status statefulset/nats --timeout=180s
 }
 
 install_gateway() {
@@ -150,6 +214,7 @@ apply_namespaces
 ensure_secrets
 install_platform
 wait_platform
+install_observability
 install_gateway
 build_and_load_images
 install_services
@@ -157,3 +222,4 @@ wait_services
 echo "==> local cluster ready (context $CTX)"
 echo "orders: http://localhost:8080/orders"
 echo "next:   make local-smoke | make local-status | make local-dlq | make local-reload"
+echo "        make grafana | make prom | make alerts"

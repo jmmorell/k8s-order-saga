@@ -13,3 +13,6 @@ env:
   DATABASE_URL: postgres://postgres:$(POSTGRES_PASSWORD)@postgres.platform.svc.cluster.local:5432/inventory?sslmode=disable
   NATS_URL: nats://nats.platform.svc.cluster.local:4222
   RESTOCK_INTERVAL: 1m
+
+otel:
+  endpoint: http://otel-collector.observability.svc.cluster.local:4318

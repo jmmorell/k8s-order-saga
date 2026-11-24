@@ -1,0 +1,111 @@
+# Prometheus Operator, Prometheus, Alertmanager, Grafana, kube-state-metrics and node-exporter in
+# the observability namespace (release 'kps'). Values for prometheus-community/kube-prometheus-stack;
+# image tags are the chart defaults, pinned by the chart version. Nothing is exposed outside the
+# cluster: use 'make grafana', 'make prom' and 'make alerts'.
+fullnameOverride: kps
+
+# kind runs these on the control-plane node bound to 127.0.0.1, out of Prometheus' reach.
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeEtcd:
+  enabled: false
+kubeProxy:
+  enabled: false
+
+prometheusOperator:
+  resources:
+    requests: {cpu: 20m, memory: 48Mi}
+    limits: {cpu: 200m, memory: 128Mi}
+  prometheusConfigReloader:
+    resources:
+      requests: {cpu: 10m, memory: 24Mi}
+      limits: {cpu: 100m, memory: 48Mi}
+  admissionWebhooks:
+    patch:
+      resources:
+        requests: {cpu: 10m, memory: 24Mi}
+        limits: {cpu: 100m, memory: 64Mi}
+
+prometheus:
+  prometheusSpec:
+    # Pick up every ServiceMonitor, PodMonitor and PrometheusRule in the cluster, not only the
+    # ones labelled with this release.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    retention: 6h
+    storageSpec:
+      emptyDir:
+        sizeLimit: 2Gi
+    resources:
+      requests: {cpu: 100m, memory: 384Mi}
+      limits: {cpu: "1", memory: 1Gi}
+
+alertmanager:
+  alertmanagerSpec:
+    resources:
+      requests: {cpu: 10m, memory: 32Mi}
+      limits: {cpu: 100m, memory: 96Mi}
+  # Only alerts labelled team="saga" are mailed (to Mailpit); everything else, including the
+  # chart's own cluster alerts, goes to the null receiver.
+  config:
+    global:
+      resolve_timeout: 5m
+    route:
+      receiver: "null"
+      group_by: [alertname]
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 4h
+      routes:
+        - receiver: mailpit
+          matchers:
+            - team="saga"
+    receivers:
+      - name: "null"
+      - name: mailpit
+        email_configs:
+          - to: oncall@example.local
+            from: alertmanager@example.local
+            smarthost: mailpit.platform.svc.cluster.local:1025
+            require_tls: false
+            send_resolved: true
+
+grafana:
+  admin:
+    # Created by scripts/local-up.sh (ensure_secrets); never stored in Git.
+    existingSecret: grafana-admin
+    userKey: admin-user
+    passwordKey: admin-password
+  testFramework:
+    enabled: false
+  resources:
+    requests: {cpu: 50m, memory: 192Mi}
+    limits: {cpu: 500m, memory: 512Mi}
+  sidecar:
+    resources:
+      requests: {cpu: 10m, memory: 48Mi}
+      limits: {cpu: 100m, memory: 128Mi}
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      labelValue: "1"
+      searchNamespace: ALL
+  additionalDataSources:
+    - name: Tempo
+      uid: tempo
+      type: tempo
+      access: proxy
+      url: http://tempo.observability.svc.cluster.local:3200
+
+kube-state-metrics:
+  resources:
+    requests: {cpu: 10m, memory: 32Mi}
+    limits: {cpu: 100m, memory: 96Mi}
+
+prometheus-node-exporter:
+  resources:
+    requests: {cpu: 10m, memory: 24Mi}
+    limits: {cpu: 100m, memory: 64Mi}

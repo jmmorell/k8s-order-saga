@@ -12,3 +12,6 @@ secretEnv:
 env:
   DATABASE_URL: postgres://postgres:$(POSTGRES_PASSWORD)@postgres.platform.svc.cluster.local:5432/orders?sslmode=disable
   NATS_URL: nats://nats.platform.svc.cluster.local:4222
+
+otel:
+  endpoint: http://otel-collector.observability.svc.cluster.local:4318

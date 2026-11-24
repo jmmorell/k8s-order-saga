@@ -206,7 +206,7 @@
               "mode": "line"
             }
           },
-          "min": 0.9,
+          "softMin": 0.9,
           "max": 1,
           "thresholds": {
             "mode": "absolute",
@@ -236,9 +236,6 @@
               {
                 "id": "min",
                 "value": 0
-              },
-              {
-                "id": "max"
               },
               {
                 "id": "custom.axisPlacement",

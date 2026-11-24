@@ -72,4 +72,7 @@ Minor findings the task and final reviews raised and deliberately left open, gro
 - Loki indexes `k8s_pod_name` as a stream label (its default OTLP mapping); fine locally, but every pod restart creates new streams. Moving it to structured metadata would be the choice under pod churn.
 - `OrdersStuckPending` can fire after a NATS outage longer than 2 minutes: orders published but not finished when NATS stopped stay PENDING until it returns. They complete by themselves, so the page is noise in that case.
 - `obs-check.sh` and `trace-check.sh` also need `python3` on the host (like `make local-dlq`).
-
+- `EventsDeadLettered`: its second term (`or ... unless ... offset 10m`) also fires once, about 10 minutes after a Collector outage or a Prometheus restart, while any `dead_letter > 0` series exists (the tour section 1 drill scales the Collector to 0).
+- The dashboard "dead-lettered/s" panel misses a pod's first dead letter for the same reason (no previous sample to take a rate from); the DLQ size line covers it.
+- kube-prometheus-stack's default `CPUThrottlingHigh` fires for node-exporter and the Grafana dashboard sidecar (routed to the null receiver, so no email); their 100m CPU limits are tight.
+- The `reason` label of `saga.orders.completed` comes from the event payload unvalidated; it is bounded in practice (only our constants are ever published) but could be clamped to the known set.

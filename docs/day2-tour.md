@@ -6,6 +6,8 @@ You need the cluster running (`make local-up`, then `make local-smoke` prints `S
 
 Some commands run forever (`kubectl get pods -w`). Run those in a second terminal and stop them with Ctrl-C.
 
+On a cluster that already has day 3 installed you will also see the `observability` namespace, its pods and Helm releases, and `nats-0` with three containers instead of two (the third is a metrics exporter). The [day-3 tour](day3-tour.md) covers them.
+
 ## A few words first
 
 Kubernetes (K8s) runs containers for you on a group of machines. You do not tell it "start this container"; you describe the state you want ("two copies of orders, always"), and K8s keeps reality equal to that description. Everything is an object with a `kind`, a `name` and a `spec` (what you want), and K8s fills in a `status` (what is true now). The objects live in the API server, and `kubectl` is the command line that talks to it.
@@ -478,7 +480,7 @@ You should see how much CPU and memory of this node the scheduler has already ha
 kubectl --context kind-order-saga top pods -n shop
 ```
 
-You should see `error: Metrics API not available`. Usage numbers come from the metrics-server, which is not installed; metrics arrive on day 3. Until then you can see what was asked for, but not what is used.
+On a day-2 cluster you see `error: Metrics API not available`. Usage numbers come from the metrics-server, which day 2 does not install; without it you can see what was asked for, but not what is used. From day 3 on, metrics-server is installed and the command prints each pod's actual CPU and memory (see section 8 of the [day-3 tour](day3-tour.md)).
 
 ## 10. What is deliberately missing, and what differs on GKE
 

@@ -84,18 +84,18 @@ func (s *Service) HandleOrderCreated(ctx context.Context, e events.Envelope) err
 			return err
 		}
 		if created {
-			s.log.Info("stock reserved", "order_id", e.OrderID.String(), "amount_cents", r.AmountCents)
+			s.log.InfoContext(ctx, "stock reserved", "order_id", e.OrderID.String(), "amount_cents", r.AmountCents)
 		} else {
-			s.logRepublished(e, events.InventoryReserved)
+			s.logRepublished(ctx, e, events.InventoryReserved)
 		}
 	case statusRejected:
 		if err := s.publish(ctx, events.InventoryRejected, e, events.InventoryRejectedPayload{Reason: r.Reason, SKU: r.SKU}); err != nil {
 			return err
 		}
 		if created {
-			s.log.Info("stock rejected", "order_id", e.OrderID.String(), "reason", r.Reason, "sku", r.SKU)
+			s.log.InfoContext(ctx, "stock rejected", "order_id", e.OrderID.String(), "reason", r.Reason, "sku", r.SKU)
 		} else {
-			s.logRepublished(e, events.InventoryRejected)
+			s.logRepublished(ctx, e, events.InventoryRejected)
 		}
 	}
 	return nil // RELEASED: the order was already compensated, nothing to announce
@@ -138,16 +138,16 @@ func (s *Service) HandlePaymentFailed(ctx context.Context, e events.Envelope) er
 			return err
 		}
 		if released {
-			s.log.Info("stock released", "order_id", e.OrderID.String())
+			s.log.InfoContext(ctx, "stock released", "order_id", e.OrderID.String())
 		} else {
-			s.logRepublished(e, events.InventoryReleased)
+			s.logRepublished(ctx, e, events.InventoryReleased)
 		}
 	}
 	return nil
 }
 
-func (s *Service) logRepublished(e events.Envelope, subject events.Subject) {
-	s.log.Debug("re-published stored outcome", "order_id", e.OrderID.String(), "subject", string(subject))
+func (s *Service) logRepublished(ctx context.Context, e events.Envelope, subject events.Subject) {
+	s.log.DebugContext(ctx, "re-published stored outcome", "order_id", e.OrderID.String(), "subject", string(subject))
 }
 
 // Restock resets every product's stock to its restock_to level.
@@ -237,7 +237,7 @@ func (s *Service) restockLoop(ctx context.Context, every time.Duration) {
 			return
 		case <-t.C:
 			if err := s.Restock(ctx); err != nil && ctx.Err() == nil {
-				s.log.Error("restock failed", "error", err)
+				s.log.ErrorContext(ctx, "restock failed", "error", err)
 			}
 		}
 	}

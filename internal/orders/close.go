@@ -77,9 +77,9 @@ func (s *Service) HandleResult(ctx context.Context, e events.Envelope) error {
 			return err
 		}
 		if closed {
-			s.log.Info("order confirmed", "order_id", e.OrderID.String(), "amount_cents", *amount)
+			s.log.InfoContext(ctx, "order confirmed", "order_id", e.OrderID.String(), "amount_cents", *amount)
 		} else {
-			s.logRepublished(e, events.OrderConfirmed)
+			s.logRepublished(ctx, e, events.OrderConfirmed)
 		}
 	case StatusCancelled:
 		if err := s.publish(ctx, events.OrderCancelled, e,
@@ -87,16 +87,16 @@ func (s *Service) HandleResult(ctx context.Context, e events.Envelope) error {
 			return err
 		}
 		if closed {
-			s.log.Info("order cancelled", "order_id", e.OrderID.String(), "reason", reason)
+			s.log.InfoContext(ctx, "order cancelled", "order_id", e.OrderID.String(), "reason", reason)
 		} else {
-			s.logRepublished(e, events.OrderCancelled)
+			s.logRepublished(ctx, e, events.OrderCancelled)
 		}
 	}
 	return nil
 }
 
-func (s *Service) logRepublished(e events.Envelope, subject events.Subject) {
-	s.log.Debug("re-published stored outcome", "order_id", e.OrderID.String(), "subject", string(subject))
+func (s *Service) logRepublished(ctx context.Context, e events.Envelope, subject events.Subject) {
+	s.log.DebugContext(ctx, "re-published stored outcome", "order_id", e.OrderID.String(), "subject", string(subject))
 }
 
 func (s *Service) publish(ctx context.Context, subject events.Subject, cause events.Envelope, payload any) error {

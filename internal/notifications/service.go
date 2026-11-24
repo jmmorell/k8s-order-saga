@@ -61,7 +61,7 @@ func (s *Service) Handle(ctx context.Context, e events.Envelope) error {
 	if err := s.sender.Send(ctx, to, subject, body); err != nil {
 		return fmt.Errorf("send email for order %s: %w", e.OrderID, err)
 	}
-	s.log.Info("email sent", "order_id", e.OrderID, "subject", subject)
+	s.log.InfoContext(ctx, "email sent", "order_id", e.OrderID, "subject", subject)
 	return nil
 }
 

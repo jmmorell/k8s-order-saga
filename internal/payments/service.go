@@ -125,13 +125,21 @@ func (s *Service) HandleInventoryReserved(ctx context.Context, e events.Envelope
 		return err
 	}
 
+	// Count right after the commit: a failed publish is redelivered with
+	// created=false, so counting after it would lose the payment.
+	if created {
+		result := "failed"
+		if p.Status == statusSucceeded {
+			result = "succeeded"
+		}
+		recordPayment(ctx, result)
+	}
 	if p.Status == statusSucceeded {
 		if err := s.publish(ctx, events.PaymentSucceeded, e,
 			events.PaymentSucceededPayload{PaymentID: p.ID, AmountCents: p.AmountCents}); err != nil {
 			return err
 		}
 		if created {
-			recordPayment(ctx, "succeeded")
 			s.log.InfoContext(ctx, "payment succeeded", "order_id", e.OrderID.String(),
 				"payment_id", p.ID.String(), "amount_cents", p.AmountCents)
 		} else {
@@ -143,7 +151,6 @@ func (s *Service) HandleInventoryReserved(ctx context.Context, e events.Envelope
 		return err
 	}
 	if created {
-		recordPayment(ctx, "failed")
 		s.log.InfoContext(ctx, "payment failed", "order_id", e.OrderID.String(), "reason", events.ReasonDeclined)
 	} else {
 		s.logRepublished(ctx, e, events.PaymentFailed)

@@ -271,3 +271,24 @@ func TestPayments_RepublishDoesNotCount(t *testing.T) {
 	require.NoError(t, e.service(1).HandleInventoryReserved(context.Background(), reserved(t, uuid.New(), 2000)))
 	require.EqualValues(t, failed+1, count("failed"))
 }
+
+func TestPayments_CountedEvenWhenPublishFails(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+	count := func() int64 {
+		return telemetrytest.Sum(t, reader, "saga.payments", attribute.String("result", "succeeded"))
+	}
+	before := count()
+
+	nc, js, err := events.Connect(ctx, testinfra.NATS(t), "closed")
+	require.NoError(t, err)
+	nc.Close()
+	broken := payments.NewService(e.pool, js, payments.Config{}, slog.New(slog.DiscardHandler))
+
+	env := reserved(t, uuid.New(), 2000)
+	require.Error(t, broken.HandleInventoryReserved(ctx, env), "publish must fail")
+	require.EqualValues(t, before+1, count(), "the committed payment is counted before the publish")
+
+	require.NoError(t, e.service(0).HandleInventoryReserved(ctx, env), "redelivery")
+	require.EqualValues(t, before+1, count(), "redelivery does not count again")
+}

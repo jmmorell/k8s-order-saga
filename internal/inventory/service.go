@@ -78,13 +78,23 @@ func (s *Service) HandleOrderCreated(ctx context.Context, e events.Envelope) err
 		return err
 	}
 
+	// Count right after the commit: a failed publish is redelivered with
+	// created=false, so counting after it would lose the operation.
+	if created {
+		switch r.Status {
+		case statusReserved:
+			recordOperation(ctx, "reserved")
+		case statusRejected:
+			recordOperation(ctx, "rejected")
+		}
+	}
+
 	switch r.Status {
 	case statusReserved:
 		if err := s.publish(ctx, events.InventoryReserved, e, events.InventoryReservedPayload{Items: r.Items, AmountCents: r.AmountCents}); err != nil {
 			return err
 		}
 		if created {
-			recordOperation(ctx, "reserved")
 			s.log.InfoContext(ctx, "stock reserved", "order_id", e.OrderID.String(), "amount_cents", r.AmountCents)
 		} else {
 			s.logRepublished(ctx, e, events.InventoryReserved)
@@ -94,7 +104,6 @@ func (s *Service) HandleOrderCreated(ctx context.Context, e events.Envelope) err
 			return err
 		}
 		if created {
-			recordOperation(ctx, "rejected")
 			s.log.InfoContext(ctx, "stock rejected", "order_id", e.OrderID.String(), "reason", r.Reason, "sku", r.SKU)
 		} else {
 			s.logRepublished(ctx, e, events.InventoryRejected)
@@ -135,12 +144,14 @@ func (s *Service) HandlePaymentFailed(ctx context.Context, e events.Envelope) er
 	if err != nil {
 		return err
 	}
+	if released {
+		recordOperation(ctx, "released")
+	}
 	if status == statusReleased {
 		if err := s.publish(ctx, events.InventoryReleased, e, events.InventoryReleasedPayload{}); err != nil {
 			return err
 		}
 		if released {
-			recordOperation(ctx, "released")
 			s.log.InfoContext(ctx, "stock released", "order_id", e.OrderID.String())
 		} else {
 			s.logRepublished(ctx, e, events.InventoryReleased)

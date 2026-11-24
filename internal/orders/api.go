@@ -76,7 +76,10 @@ func newRootMux(health, api http.Handler) http.Handler {
 // r.Pattern is known; before that (and on a 404) the root pattern "/" gives
 // way to the method alone.
 func traced(api http.Handler) http.Handler {
+	// WithServerName pins server.address: otherwise otelhttp copies the
+	// client-controlled Host header into it, on spans and metrics alike.
 	return otelhttp.NewHandler(api, "orders",
+		otelhttp.WithServerName("orders"),
 		otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
 			if r.Pattern == "" || r.Pattern == "/" {
 				return r.Method

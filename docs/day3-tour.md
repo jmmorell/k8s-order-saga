@@ -2,7 +2,7 @@
 
 Day 2 put the saga on Kubernetes. Day 3 made it observable: every service now sends traces, metrics and logs, a small stack stores them, Grafana shows them, and an alert reaches a (fake) on-call inbox when something goes wrong. You did not write this code. This tour is how you come to own it: for each piece you see what it is, which file defines it, how to look at it live, and (where it is safe) how to break it and watch.
 
-> **Since day 4** ([day-4 tour](day4-tour.md)), a few things here read differently. Argo CD deploys the five services and `saga-observability` from Git, so `helm list` no longer shows them (section 1 lists four releases in `observability`: `kps`, `loki`, `otel-collector` and `tempo`), and the payment-outage drill in section 6 cannot use `helm upgrade payments`: `payments` is not a Helm release any more, and a `kubectl` change to it is reverted within seconds. Pause Argo CD first and change the Deployment with `kubectl --context kind-order-saga set env deployment/payments -n shop PAYMENT_FAILURE_RATE=1`; resuming Argo CD is the restore (day-4 tour, section 4, "Pausing Argo CD"). node-exporter is disabled (ADR 0009), so section 1 shows no `kps-prometheus-node-exporter-...` pods and section 8's first item is already gone.
+> **Since day 4** ([day-4 tour](day4-tour.md)), a few things here read differently. Argo CD deploys the five services and `saga-observability` from Git, so `helm list` no longer shows them (section 1 lists four releases in `observability`: `kps`, `loki`, `otel-collector` and `tempo`), and the payment-outage drill in section 6 cannot use `helm upgrade payments`: `payments` is not a Helm release any more, and a `kubectl` change to it is reverted within seconds. Pause Argo CD first and change the Deployment with `kubectl --context kind-order-saga set env deployment/payments -n shop PAYMENT_FAILURE_RATE=1`; resuming Argo CD is the restore (day-4 tour, section 4, "Pausing Argo CD"). node-exporter is disabled (ADR 0009), so section 1 shows no `kps-prometheus-node-exporter-...` pods and the first item of section 8 loses its node-exporter part (kube-state-metrics still runs). In the section-6 drill, replace the `helm upgrade ... --set env.PAYMENT_FAILURE_RATE=1` break with the `kubectl set env` above (after pausing Argo CD), and replace the restore `helm upgrade ... -f deploy/local/values/payments.yaml` with resuming Argo CD (it reverts the Deployment to Git's `0.1`); check the value with `kubectl --context kind-order-saga -n shop get deploy payments -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="PAYMENT_FAILURE_RATE")].value}'`.
 
 You need the cluster running with some minutes of loadgen traffic behind it (`make local-up`, then `make local-smoke` prints `SMOKE OK` and `make obs-check` prints `OBS OK`). As on day 2, every command passes `--context kind-order-saga` (or `--kube-context` for Helm), the commands are written for zsh and bash, and you run them from the repository root.
 
@@ -481,10 +481,10 @@ helm --kube-context kind-order-saga -n shop upgrade payments charts/service -f d
 You should see `Release "payments" has been upgraded.`. Confirm the rate is back:
 
 ```bash
-helm --kube-context kind-order-saga -n shop get values payments | grep PAYMENT_FAILURE_RATE
+kubectl --context kind-order-saga -n shop get deploy payments -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="PAYMENT_FAILURE_RATE")].value}'
 ```
 
-You should see `PAYMENT_FAILURE_RATE: "0.1"`. The alert resolves once the 5-minute window has drained below 0.25 (about 5 minutes), and Alertmanager sends `[RESOLVED] PaymentErrorRateHigh ...` at its next `group_interval`, up to 5 minutes later. Run the search command above again until you see both emails.
+You should see `0.1`. The alert resolves once the 5-minute window has drained below 0.25 (about 5 minutes), and Alertmanager sends `[RESOLVED] PaymentErrorRateHigh ...` at its next `group_interval`, up to 5 minutes later. Run the search command above again until you see both emails.
 
 ## 7. Stuck PENDING: the alert for the missing outbox
 
@@ -636,10 +636,10 @@ During a migration the Collector can send to both, Tempo and Cloud Trace at once
 Stop every port-forward with Ctrl-C. Check that every exercise is undone:
 
 ```bash
-kubectl --context kind-order-saga get deployment otel-collector -n observability; kubectl --context kind-order-saga get statefulset nats -n platform; helm --kube-context kind-order-saga -n shop get values payments | grep PAYMENT_FAILURE_RATE
+kubectl --context kind-order-saga get deployment otel-collector -n observability; kubectl --context kind-order-saga get statefulset nats -n platform; kubectl --context kind-order-saga -n shop get deploy payments -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="PAYMENT_FAILURE_RATE")].value}'
 ```
 
-You should see `otel-collector` `1/1`, `nats` `1/1` and `PAYMENT_FAILURE_RATE: "0.1"`.
+You should see `otel-collector` `1/1`, `nats` `1/1` and `0.1`.
 
 ```bash
 make local-smoke && make obs-check

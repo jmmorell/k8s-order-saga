@@ -81,7 +81,7 @@ Day 2 runs the same services on a three-node [kind](https://kind.sigs.k8s.io/) c
 make local-up      # creates the cluster order-saga and installs everything; safe to re-run
 make local-smoke   # same checks as make smoke, against the cluster; prints SMOKE OK
 make local-status  # nodes and all pods
-make local-reload  # rebuilds the images tagged dev, loads them into kind and restarts their Deployments
+make local-reload  # rebuilds the images tagged dev, loads them into kind and restarts their Deployments (fails if none is tagged dev)
 make local-dlq     # message count of every JetStream stream
 make local-down    # deletes the cluster, its data and its Secret
 ```
@@ -89,6 +89,8 @@ make local-down    # deletes the cluster, its data and its Secret
 The orders API is at `http://localhost:8080/orders`. Only the `/orders` path is routed; `/healthz` and `/readyz` return 404 from outside. Every `kubectl` and `helm` call passes the context `kind-order-saga`, so the cluster never mixes with your other contexts. (`kind create cluster` does switch kubectl's current context to `kind-order-saga`; the scripts never rely on it.)
 
 After changing code, use `make local-reload`: re-running `make local-up` rebuilds and loads the `:dev` images but does not restart running pods. Since day 4 the services are deployed by Argo CD from Git (see "Deploy from Git" below), so a change to their values files or to `charts/service` reaches the cluster only once it is pushed to the branch Argo CD tracks.
+
+Once `main` carries a release tag (a 7-hex SHA, see the release section of the day-4 tour), `make local-reload` has nothing to build and exits with an error, and branches cut from `main` inherit those tags. To work on local code again, on a branch: `scripts/bump-image-tag.sh dev`, commit and push the branch, `ARGOCD_REVISION=<branch> make local-up` (Argo CD tracks the branch), then `make local-reload`. Never merge those `dev` tags into `main`.
 
 `make smoke` and `make local-smoke` retry the confirmed order up to 5 times when the simulated payment is declined.
 
@@ -236,7 +238,8 @@ Before day 5 starts, the author checks that they own this part:
 
 - [ ] `make local-down && make local-up && make local-smoke && make policy-test` → `SMOKE OK`, `POLICY OK` (before the merge, `ARGOCD_REVISION=day4/gitops-security make local-up`)
 - [ ] Work through [docs/day4-tour.md](docs/day4-tour.md) top to bottom
-- [ ] After merging: run `release.yml` once (`gh workflow run release.yml --ref main`), see the tag commit on `main`, and see Argo CD roll it out
+- [ ] Right after merging, run `make local-up`, before dispatching the release: if the `day4/gitops-security` branch is deleted at merge, the Applications tracking it go to ComparisonError until `local-up` moves them to `main`
+- [ ] Then run `release.yml` once (`gh workflow run release.yml --ref main`), see the tag commit on `main`, and see Argo CD roll it out
 - [ ] Make the GHCR packages public if the first pull fails (Package settings → Change visibility)
 - [ ] Explain in own words: `baseline` vs `restricted`, default-deny and why DNS needs an allow, push vs pull deploys, why CI has no cluster credentials, what self-heal does
 - [ ] Read ADRs 0009–0010 and be able to defend them

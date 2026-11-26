@@ -433,7 +433,9 @@ You should see `200` when the package can be pulled anonymously and `403` when i
 kubectl --context kind-order-saga get pods -n shop -o custom-columns='POD:.metadata.name,IMAGE:.spec.containers[0].image'
 ```
 
-You should see every pod on `ghcr.io/jmmorell/k8s-order-saga/<service>:<the 7 hex of the bump>` instead of `:dev`. From now on the nodes pull these images from GHCR; `make local-reload` only rebuilds services whose values still say `dev` (none, after a release), and a release tag is never built locally, so the cluster always runs exactly what that tag names.
+You should see every pod on `ghcr.io/jmmorell/k8s-order-saga/<service>:<the 7 hex of the bump>` instead of `:dev`. From now on the nodes pull these images from GHCR; `make local-reload` only rebuilds services whose values still say `dev` (none, after a release), and a release tag is never built locally, so the cluster always runs exactly what that tag names. `make local-reload` now exits with an error when no service is on `dev`.
+
+**Back to local code.** Branches cut from `main` inherit the SHA tags, so to try local changes again: on a branch run `scripts/bump-image-tag.sh dev`, commit and push the branch, run `ARGOCD_REVISION=<branch> make local-up` (Argo CD tracks that branch), then `make local-reload`. Do not merge the `dev` tags back into `main`.
 
 ## 6. A bad rollout, and the rollback with `git revert`
 

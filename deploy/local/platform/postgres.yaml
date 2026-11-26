@@ -27,6 +27,8 @@ spec:
       labels:
         app.kubernetes.io/name: postgres
     spec:
+      # Nothing here calls the Kubernetes API: no ServiceAccount token (ADR 0009).
+      automountServiceAccountToken: false
       # Pod Security restricted (ADR 0009): uid/gid 70 is the alpine image's postgres user, which
       # the image's entrypoint used to switch to after starting as root, so the data stays readable.
       securityContext:

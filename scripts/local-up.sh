@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Creates the kind cluster and installs NATS, Postgres, Mailpit, the observability stack, Envoy
-# Gateway and the five services. Safe to re-run. 'local-up.sh reload' only rebuilds and restarts the services.
+# Gateway and the five services, then the NetworkPolicies. Safe to re-run. 'local-up.sh reload'
+# only rebuilds and restarts the services.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -199,6 +200,13 @@ install_services() {
   done
 }
 
+# Default-deny NetworkPolicies with explicit allows (ADR 0009), for shop, platform, observability
+# and argocd. Applied once everything is installed; Argo CD takes them over later.
+apply_policies() {
+  echo "==> applying network policies"
+  "${K[@]}" apply -f deploy/local/policies/
+}
+
 wait_services() {
   echo "==> waiting for services"
   local svc
@@ -226,6 +234,7 @@ install_observability
 install_gateway
 build_and_load_images
 install_services
+apply_policies
 wait_services
 echo "==> local cluster ready (context $CTX)"
 echo "orders: http://localhost:8080/orders"

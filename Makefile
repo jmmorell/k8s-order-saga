@@ -92,6 +92,6 @@ obs-check:
 secrets-scan:
 	./scripts/secrets-scan.sh
 
-# Checks Pod Security against the live cluster (levels, rejected privileged pods, no violating pods); prints POLICY OK.
+# Checks Pod Security (levels, rejected privileged pods, no violating pods) and the NetworkPolicies (curl probes) against the live cluster; prints POLICY OK.
 policy-test:
 	./scripts/policy-test.sh

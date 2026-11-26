@@ -1,0 +1,114 @@
+# NetworkPolicies of platform (ADR 0009): default-deny ingress and egress. Postgres, NATS and
+# Mailpit only answer the services that use them (and Prometheus and Alertmanager); none of them
+# starts a connection, so the only egress is DNS. Peers are selected by namespace name plus pod
+# labels, never by IP.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: platform
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: platform
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres-ingress
+  namespace: platform
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: postgres
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: shop
+          podSelector:
+            matchExpressions:
+              - {key: app.kubernetes.io/name, operator: In, values: [orders, inventory, payments]}
+      ports:
+        - {protocol: TCP, port: 5432}
+---
+# Clients on 4222; Prometheus scrapes the prometheus-nats-exporter sidecar on 7777 (prom-metrics).
+# The monitor port 8222 is only read by that sidecar, over localhost.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: nats-ingress
+  namespace: platform
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: nats
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: shop
+          podSelector:
+            matchExpressions:
+              - {key: app.kubernetes.io/name, operator: In, values: [orders, inventory, payments, notifications]}
+      ports:
+        - {protocol: TCP, port: 4222}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - {protocol: TCP, port: 7777}
+---
+# SMTP from notifications (order emails) and Alertmanager (saga alerts). The web UI and API
+# (8025) are only reached through kubectl port-forward.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mailpit-ingress
+  namespace: platform
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: mailpit
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: shop
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: notifications
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: alertmanager
+      ports:
+        - {protocol: TCP, port: 1025}

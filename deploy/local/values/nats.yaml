@@ -22,6 +22,8 @@ config:
 podTemplate:
   merge:
     spec:
+      # Neither NATS nor its sidecars call the Kubernetes API: no ServiceAccount token.
+      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000

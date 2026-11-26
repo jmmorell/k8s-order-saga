@@ -1,0 +1,5 @@
+apiVersion: v2
+name: apps
+description: App-of-apps of the order saga workload; renders one Argo CD Application per piece (ADR 0010).
+type: application
+version: 0.1.0

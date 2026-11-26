@@ -1,0 +1,57 @@
+# Argo CD (ADR 0010), chart argo/argo-cd pinned by ARGOCD_CHART_VERSION in versions.env.
+# Only what the app-of-apps needs: the application controller, the repo server, the API/UI server
+# and Redis. Dex (SSO), the notifications controller and the ApplicationSet controller are unused.
+# No repository or registry credentials: the repo and its GHCR images are public.
+
+global:
+  # The argocd NetworkPolicies are ours (deploy/local/policies/argocd.yaml, synced by the
+  # policies Application): default-deny ingress, same-namespace allowed. The chart's own would
+  # add allows on top, such as the server open to any source.
+  networkPolicy:
+    create: false
+
+dex:
+  enabled: false
+
+notifications:
+  enabled: false
+
+# The chart has no switch for the ApplicationSet controller; zero replicas leaves it unscheduled.
+applicationSet:
+  replicas: 0
+  resources:
+    requests: {cpu: 10m, memory: 32Mi}
+    limits: {cpu: 200m, memory: 128Mi}
+
+controller:
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {cpu: "1", memory: 768Mi}
+
+repoServer:
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {cpu: "1", memory: 512Mi}
+  copyutil:
+    resources:
+      requests: {cpu: 10m, memory: 16Mi}
+      limits: {cpu: 100m, memory: 64Mi}
+
+# Reached only with kubectl port-forward (make argocd); the Service stays ClusterIP.
+server:
+  service:
+    type: ClusterIP
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {cpu: 500m, memory: 256Mi}
+
+redis:
+  resources:
+    requests: {cpu: 20m, memory: 32Mi}
+    limits: {cpu: 200m, memory: 128Mi}
+
+# The Helm hook Job that creates the Redis password Secret (argocd-redis) in the cluster.
+redisSecretInit:
+  resources:
+    requests: {cpu: 10m, memory: 32Mi}
+    limits: {cpu: 100m, memory: 64Mi}

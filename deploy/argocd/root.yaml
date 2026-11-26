@@ -1,0 +1,25 @@
+# The root of the app-of-apps (ADR 0010): renders deploy/argocd/apps, which holds one Application
+# per piece of the workload. scripts/local-up.sh applies this file with both "main"s below
+# replaced by ARGOCD_REVISION (default main), so a branch can be tested before it is merged.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/jmmorell/k8s-order-saga.git
+    targetRevision: main
+    path: deploy/argocd/apps
+    helm:
+      parameters:
+        - name: revision
+          value: main
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

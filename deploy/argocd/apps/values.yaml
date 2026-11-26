@@ -1,0 +1,13 @@
+# Git repository and revision every Application tracks. local-up.sh sets revision from
+# ARGOCD_REVISION (default main), so a branch can be tested before it is merged.
+repoURL: https://github.com/jmmorell/k8s-order-saga.git
+revision: main
+
+# One Application svc-<name> per service: charts/service with deploy/local/values/<name>.yaml,
+# release <name>, in namespace shop.
+services:
+  - orders
+  - inventory
+  - payments
+  - notifications
+  - loadgen

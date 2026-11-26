@@ -1,0 +1,76 @@
+{{- /*
+One Application per piece of the workload. All of them sync automatically from the same repo
+and revision, prune what Git no longer has and revert changes made behind Argo CD's back. None
+creates its namespace: local-up.sh owns the namespaces (Pod Security labels) and the Secrets in
+them. The finalizer deletes an Application's resources when the Application itself is pruned.
+*/ -}}
+{{- define "apps.syncPolicy" }}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+{{- end }}
+{{- range .Values.services }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: svc-{{ . }}
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: {{ $.Values.repoURL }}
+    targetRevision: {{ $.Values.revision | quote }}
+    path: charts/service
+    helm:
+      releaseName: {{ . }}
+      valueFiles:
+        - ../../deploy/local/values/{{ . }}.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: shop
+{{- include "apps.syncPolicy" $ }}
+{{- end }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: saga-observability
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: {{ .Values.repoURL }}
+    targetRevision: {{ .Values.revision | quote }}
+    path: charts/saga-observability
+    helm:
+      releaseName: saga-observability
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: observability
+{{- include "apps.syncPolicy" . }}
+---
+# The NetworkPolicies of every namespace (ADR 0009); each file names its namespace.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: policies
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: {{ .Values.repoURL }}
+    targetRevision: {{ .Values.revision | quote }}
+    path: deploy/local/policies
+    directory:
+      recurse: false
+  destination:
+    server: https://kubernetes.default.svc
+{{- include "apps.syncPolicy" . }}

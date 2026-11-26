@@ -36,7 +36,7 @@ The Helm releases of the services from day 2 and 3 are not adopted. Argo CD rend
 
 ### Self-heal and `make local-reload`
 
-`selfHeal` reverts a field that Git sets: `kubectl scale --replicas=1` on `orders` is put back to 2 within the next reconciliation. A field that Git does not set is not drift. `kubectl rollout restart` only adds the `kubectl.kubernetes.io/restartedAt` annotation to the pod template. Argo CD's diff ignores fields that are absent from the desired manifest and from the last applied configuration, so the restart stays and `make local-reload` (rebuild the `dev` images, `kind load`, restart) keeps working with Argo CD in charge.
+`selfHeal` reverts a field that Git sets: `kubectl scale --replicas=1` on `orders` is put back to 2 within seconds: the controller watches the live objects, so self-heal does not wait for the Git polling interval (measured: 2 s). A field that Git does not set is not drift. `kubectl rollout restart` only adds the `kubectl.kubernetes.io/restartedAt` annotation to the pod template. Argo CD's diff ignores fields that are absent from the desired manifest and from the last applied configuration, so the restart stays and `make local-reload` (rebuild the `dev` images, `kind load`, restart) keeps working with Argo CD in charge.
 
 `build_and_load_images` builds and loads only the services whose values tag is `dev`. A service whose values carry a release SHA is pulled from GHCR by the nodes. Loading local code under a release tag would make the cluster run something other than what that tag names.
 
@@ -49,7 +49,7 @@ The repository and the GHCR images are public, so Argo CD needs no repository cr
 - Chart `argo-cd` from `https://argoproj.github.io/argo-helm`, pinned by `ARGOCD_CHART_VERSION` in `deploy/local/versions.env`, values in `deploy/local/values/argo-cd.yaml`.
 - Only the application controller, the repo server, the API server and Redis run. Dex, the notifications controller and the ApplicationSet controller are not used. The chart has no switch for the ApplicationSet controller, so it gets zero replicas.
 - Every container has requests and limits. The server's Service stays ClusterIP. The UI is reached with `make argocd`, which port-forwards to `https://localhost:8443` and prints the command that reads the initial admin password.
-- The chart's own NetworkPolicies are turned off. The `argocd` namespace uses ours (`deploy/local/policies/argocd.yaml`): ingress default-deny with same-namespace traffic allowed, and egress open for GitHub and the API server. `kubectl port-forward` does not pass through the pod network, so it needs no allow. The namespace enforces Pod Security `baseline` and warns at `restricted` (ADR 0009).
+- The chart's own NetworkPolicies are turned off. The `argocd` namespace uses ours (`deploy/local/policies/argocd.yaml`): ingress default-deny with same-namespace traffic allowed, and egress open for GitHub and the API server. `kubectl port-forward` does not pass through the pod network, so it needs no allow. The namespace enforces Pod Security `baseline` and warns at `restricted` (ADR 0009). With this chart version and these values the install prints no `restricted` warning, so raising the level is a one-line change once it has been watched across an upgrade.
 
 ### On GKE
 
@@ -68,7 +68,7 @@ The repository and the GHCR images are public, so Argo CD needs no repository cr
 ## Consequences
 
 - To deploy, commit and push. `ARGOCD_REVISION=<branch> make local-up` points the cluster at a branch.
-- A bad commit is rolled back with `git revert`. The bad-rollout drill sets a payments tag that does not exist. The new ReplicaSet's pod sits in `ErrImagePull` while the old pod keeps serving (the default rolling update has `maxUnavailable` 25%, which rounds down to 0 for one replica), and the `svc-payments` Application shows Progressing, then Degraded once the Deployment's progress deadline passes. Reverting the commit returns it to Healthy.
-- Argo CD adds four pods and about 300 MiB to the cluster, within the 6 GB budget.
+- A bad commit is rolled back with `git revert`. The bad-rollout drill sets a payments tag that does not exist. The new ReplicaSet's pod sits in `ErrImagePull` while the old pod keeps serving (the default rolling update has `maxUnavailable` 25%, which rounds down to 0 for one replica), and the `svc-payments` Application shows Progressing, then Degraded once the Deployment's progress deadline (600 s) passes. Reverting the commit returns it to Healthy. Argo CD polls Git every 120 s plus up to 60 s of jitter (the chart default), so a pushed commit reaches the cluster within three minutes: in the drill the bad tag was applied 82 s after the push and the revert 37 s after its push, Healthy 3 s later.
+- Argo CD adds four pods and about 320 MiB to the cluster (measured with `kubectl top`; the cluster totals about 3.9 GiB), within the 6 GB budget.
 - A cluster from day 2 or 3 must be recreated once.
 - The platform is still installed imperatively. Upgrading a platform chart is a `versions.env` change plus `make local-up`, not a Git-driven sync.

@@ -60,7 +60,7 @@ Minor findings the task and final reviews raised and deliberately left open, gro
 - Readiness depends on NATS for every service, so during a NATS outage both `orders` replicas leave the Service and even `GET /orders/{id}` (Postgres only) is unavailable. Alternative: readiness means "can serve my HTTP API" and `POST` returns 503 by itself. A deliberate simplification to revisit.
 - No `topologySpreadConstraints` or PodDisruptionBudget for the two `orders` replicas.
 - No `GOMEMLIMIT` derived from the memory limit.
-- Day-4 notes: the `postgres` Secret is created outside Git (Argo-synced pods wait for it); `platform` will not pass Pod Security `restricted` as-is; `automountServiceAccountToken: false` is not set yet.
+- Day-4 notes: the `postgres` Secret is created outside Git (Argo-synced pods wait for it).
 
 ## Day 3
 - Telemetry setup: the 1 s bound in `TestSetup_UnreachableCollectorDoesNotBlock` may flake on a slow machine; the five `cmd/*/main.go` repeat the same telemetry setup/shutdown boilerplate.
@@ -74,5 +74,5 @@ Minor findings the task and final reviews raised and deliberately left open, gro
 - `obs-check.sh` and `trace-check.sh` also need `python3` on the host (like `make local-dlq`).
 - `EventsDeadLettered`: its second term (`or ... unless ... offset 10m`) also fires once, about 10 minutes after a Collector outage or a Prometheus restart, while any `dead_letter > 0` series exists (the tour section 1 drill scales the Collector to 0).
 - The dashboard "dead-lettered/s" panel misses a pod's first dead letter for the same reason (no previous sample to take a rate from); the DLQ size line covers it.
-- kube-prometheus-stack's default `CPUThrottlingHigh` fires for node-exporter and the Grafana dashboard sidecar (routed to the null receiver, so no email); their 100m CPU limits are tight.
+- kube-prometheus-stack's default `CPUThrottlingHigh` fires for node-exporter and the Grafana dashboard sidecar (routed to the null receiver, so no email); their 100m CPU limits are tight (node-exporter is disabled since Day 4, ADR 0009).
 - The `reason` label of `saga.orders.completed` comes from the event payload unvalidated; it is bounded in practice (only our constants are ever published) but could be clamped to the known set.

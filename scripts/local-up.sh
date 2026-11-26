@@ -152,7 +152,6 @@ install_observability() {
   for d in kps-operator kps-kube-state-metrics kps-grafana otel-collector; do
     "${K[@]}" -n observability rollout status "deployment/$d" --timeout=300s
   done
-  "${K[@]}" -n observability rollout status daemonset/kps-prometheus-node-exporter --timeout=180s
   "${K[@]}" -n observability rollout status statefulset/tempo --timeout=180s
   "${K[@]}" -n observability rollout status statefulset/loki --timeout=180s
   # The operator creates these StatefulSets asynchronously; wait on the custom resources instead.

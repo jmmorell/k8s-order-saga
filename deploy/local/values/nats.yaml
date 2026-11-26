@@ -15,14 +15,39 @@ config:
     enabled: true
     port: 8222
 
+# Pod Security restricted (ADR 0009): the images default to root; every container runs as 1000
+# with no capabilities and a read-only root filesystem. The chart already mounts the PID file
+# directory (/var/run/nats) as an emptyDir and JetStream writes to its PVC. A JetStream store
+# written by the old root-run server is not writable by 1000: rebuild from zero (make local-down).
+podTemplate:
+  merge:
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+
 container:
   merge:
+    securityContext:
+      readOnlyRootFilesystem: true
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop: [ALL]
     resources:
       requests: {cpu: 50m, memory: 64Mi}
       limits: {cpu: 250m, memory: 192Mi}
 
 reloader:
   merge:
+    securityContext:
+      readOnlyRootFilesystem: true
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop: [ALL]
     resources:
       requests: {cpu: 10m, memory: 16Mi}
       limits: {cpu: 50m, memory: 32Mi}
@@ -32,6 +57,11 @@ reloader:
 promExporter:
   enabled: true
   merge:
+    securityContext:
+      readOnlyRootFilesystem: true
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop: [ALL]
     resources:
       requests: {cpu: 10m, memory: 16Mi}
       limits: {cpu: 100m, memory: 48Mi}

@@ -1,4 +1,4 @@
-# Prometheus Operator, Prometheus, Alertmanager, Grafana, kube-state-metrics and node-exporter in
+# Prometheus Operator, Prometheus, Alertmanager, Grafana and kube-state-metrics in
 # the observability namespace (release 'kps'). Values for prometheus-community/kube-prometheus-stack;
 # image tags are the chart defaults, pinned by the chart version. Nothing is exposed outside the
 # cluster: use 'make grafana', 'make prom' and 'make alerts'.
@@ -132,7 +132,12 @@ kube-state-metrics:
     requests: {cpu: 10m, memory: 32Mi}
     limits: {cpu: 100m, memory: 96Mi}
 
-prometheus-node-exporter:
-  resources:
-    requests: {cpu: 10m, memory: 24Mi}
-    limits: {cpu: 100m, memory: 64Mi}
+# node-exporter needs hostNetwork, hostPID and hostPath, which fail even Pod Security baseline,
+# and on kind it only measures the Docker host (ADR 0009). kubectl top still works (metrics-server).
+nodeExporter:
+  enabled: false
+defaultRules:
+  rules:
+    # Without node-exporter these rules have no input.
+    nodeExporterAlerting: false
+    nodeExporterRecording: false

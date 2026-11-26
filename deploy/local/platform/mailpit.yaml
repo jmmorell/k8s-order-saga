@@ -15,6 +15,14 @@ spec:
       labels:
         app.kubernetes.io/name: mailpit
     spec:
+      # Pod Security restricted (ADR 0009): the image runs as root by default; 65534 is nobody.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: mailpit
           image: axllent/mailpit:v1.33.1
@@ -38,9 +46,16 @@ spec:
             httpGet:
               path: /readyz
               port: http
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
           volumeMounts:
             - name: data
               mountPath: /data
+            - name: tmp
+              mountPath: /tmp
           resources:
             requests: {cpu: 20m, memory: 32Mi}
             limits: {cpu: 200m, memory: 256Mi}
@@ -49,6 +64,9 @@ spec:
         - name: data
           emptyDir:
             sizeLimit: 256Mi
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
 ---
 apiVersion: v1
 kind: Service

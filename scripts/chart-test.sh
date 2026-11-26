@@ -44,6 +44,19 @@ for svc in $services; do
     "- name: OTEL_METRIC_EXPORT_INTERVAL" 'value: "15000"'; do
     expect "$svc" "$s" "$out"
   done
+  # No ServiceAccount token, on the ServiceAccount and on the pod (ADR 0009).
+  sa=$(render "$svc" --show-only templates/serviceaccount.yaml)
+  grep -qx 'automountServiceAccountToken: false' <<<"$sa" ||
+    fail "$svc: ServiceAccount lacks automountServiceAccountToken: false"
+  deploy=$(render "$svc" --show-only templates/deployment.yaml)
+  grep -qx '      automountServiceAccountToken: false' <<<"$deploy" ||
+    fail "$svc: pod spec lacks automountServiceAccountToken: false"
+  # The pod-level securityContext: the block at the pod spec's indentation (6 spaces).
+  podsc=$(awk '/^      securityContext:$/ {f=1; next} f && /^        / {print; next} f {exit}' <<<"$deploy")
+  for s in "runAsNonRoot: true" "runAsUser: 65532" "runAsGroup: 65532" "seccompProfile:" "type: RuntimeDefault"; do
+    grep -qF -- "$s" <<<"$podsc" || fail "$svc: pod securityContext lacks '$s'"
+  done
+
   pod=$(awk '/- name: POD_NAME$/ {print NR; exit}' <<<"$out")
   attrs=$(awk '/- name: OTEL_RESOURCE_ATTRIBUTES/ {print NR; exit}' <<<"$out")
   [ -n "$pod" ] && [ -n "$attrs" ] || fail "$svc: POD_NAME or OTEL_RESOURCE_ATTRIBUTES env entry missing"

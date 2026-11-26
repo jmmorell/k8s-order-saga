@@ -1,4 +1,4 @@
-.PHONY: test test-short lint build up down logs smoke order dlq chart-test local-up local-down local-status local-smoke local-dlq local-reload grafana prom alerts rules-test obs-check
+.PHONY: test test-short lint build up down logs smoke order dlq chart-test local-up local-down local-status local-smoke local-dlq local-reload grafana prom alerts rules-test obs-check secrets-scan
 
 test:
 	go test -race ./...
@@ -87,3 +87,7 @@ rules-test:
 # Runs every dashboard and rule query against the live Prometheus; prints OBS OK.
 obs-check:
 	./scripts/obs-check.sh
+
+# Scans the full git history for secrets with the pinned gitleaks image; prints SECRETS OK.
+secrets-scan:
+	./scripts/secrets-scan.sh

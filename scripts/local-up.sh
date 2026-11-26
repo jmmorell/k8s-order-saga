@@ -264,12 +264,19 @@ apply_root_app() {
 # HTTP port only after Postgres and NATS answer, and its startup probe gives it up to 2 minutes.
 wait_apps() {
   echo "==> waiting for the Argo CD Applications (Synced and Healthy)"
-  local want=$((1 + ${#SERVICES[@]} + 2)) deadline=$((SECONDS + 300)) status
+  local want=$((1 + ${#SERVICES[@]} + 2)) deadline=$((SECONDS + 300)) status ok=0
   while :; do
     status=$("${K[@]}" -n argocd get applications.argoproj.io \
       -o jsonpath='{range .items[*]}{.metadata.name} {.status.sync.status} {.status.health.status}{"\n"}{end}')
+    # Three polls in a row: right after a sync an Application can read Synced before the
+    # controller has compared it again.
     if [ "$(grep -c ' Synced Healthy$' <<<"$status")" -eq "$want" ] &&
       [ "$(grep -c . <<<"$status")" -eq "$want" ]; then
+      ok=$((ok + 1))
+    else
+      ok=0
+    fi
+    if [ "$ok" -ge 3 ]; then
       echo "    $want Applications Synced and Healthy"
       return
     fi

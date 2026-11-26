@@ -55,7 +55,9 @@ spec:
     namespace: observability
 {{- include "apps.syncPolicy" . }}
 ---
-# The NetworkPolicies of every namespace (ADR 0009); each file names its namespace.
+# The NetworkPolicies of every namespace (ADR 0009), a plain directory of manifests; each file
+# names its namespace. (No "directory: {recurse: false}": Argo CD drops that empty-valued block
+# from the stored Application, and root would show it OutOfSync forever.)
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -69,8 +71,6 @@ spec:
     repoURL: {{ .Values.repoURL }}
     targetRevision: {{ .Values.revision | quote }}
     path: deploy/local/policies
-    directory:
-      recurse: false
   destination:
     server: https://kubernetes.default.svc
 {{- include "apps.syncPolicy" . }}

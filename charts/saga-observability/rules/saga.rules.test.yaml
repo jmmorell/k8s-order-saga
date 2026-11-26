@@ -1,0 +1,245 @@
+# Unit tests for saga.rules.yaml; run with 'make rules-test' (promtool test rules).
+# Series carry the labels the Collector really exports (k8s_pod_name, status, le="5.0", ...)
+# so the tests exercise the same aggregation as the live cluster.
+rule_files:
+  - saga.rules.yaml
+
+evaluation_interval: 1m
+
+tests:
+  # 30 % of payments fail for well over 5 minutes: the alert fires.
+  - interval: 1m
+    input_series:
+      - series: 'saga_payments_total{result="failed", k8s_pod_name="payments-a"}'
+        values: '0+18x20'
+      - series: 'saga_payments_total{result="succeeded", k8s_pod_name="payments-a"}'
+        values: '0+42x20'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: PaymentErrorRateHigh
+        exp_alerts: []
+      - eval_time: 7m
+        alertname: PaymentErrorRateHigh
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              team: saga
+            exp_annotations:
+              summary: "30% of payments failed over the last 5 minutes (threshold 25%)"
+
+  # 10 % failures (the normal PAYMENT_FAILURE_RATE): silent.
+  - interval: 1m
+    input_series:
+      - series: 'saga_payments_total{result="failed", k8s_pod_name="payments-a"}'
+        values: '0+6x30'
+      - series: 'saga_payments_total{result="succeeded", k8s_pod_name="payments-a"}'
+        values: '0+54x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: PaymentErrorRateHigh
+        exp_alerts: []
+
+  # The dead-letter counter goes from 0 to 1: the alert fires at once.
+  - interval: 1m
+    input_series:
+      - series: 'saga_events_consumed_total{durable="payments", subject="inventory.reserved", result="dead_letter", k8s_pod_name="payments-a"}'
+        values: '0 0 0 1 1 1 1'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: EventsDeadLettered
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: EventsDeadLettered
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              team: saga
+            exp_annotations:
+              summary: "Events were dead-lettered in the last 10 minutes; inspect the DLQ stream"
+
+  # The first dead letter of a pod: the series only appears, already at 1 (the SDK exports no
+  # zero for an attribute set it has not seen). increase() alone misses it; the alert must not.
+  - interval: 1m
+    input_series:
+      - series: 'saga_events_consumed_total{durable="payments", subject="inventory.reserved", result="ack", k8s_pod_name="payments-a"}'
+        values: '0+10x20'
+      - series: 'saga_events_consumed_total{durable="payments", subject="inventory.reserved", result="dead_letter", k8s_pod_name="payments-a"}'
+        values: '_ _ _ _ _ 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: EventsDeadLettered
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: EventsDeadLettered
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              team: saga
+            exp_annotations:
+              summary: "Events were dead-lettered in the last 10 minutes; inspect the DLQ stream"
+      # Ten minutes later nothing new has been dead-lettered: resolved.
+      - eval_time: 17m
+        alertname: EventsDeadLettered
+        exp_alerts: []
+
+  # Both orders replicas report one stuck order (Review Focus 4): one alert, no pod label,
+  # value 1 (max), not 2 (sum).
+  - interval: 1m
+    input_series:
+      - series: 'saga_orders_stuck_pending{k8s_pod_name="orders-a", service_name="orders"}'
+        values: '1x10'
+      - series: 'saga_orders_stuck_pending{k8s_pod_name="orders-b", service_name="orders"}'
+        values: '1x10'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: OrdersStuckPending
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: OrdersStuckPending
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              team: saga
+            exp_annotations:
+              summary: "1 order(s) stuck in PENDING"
+
+  # Both replicas report 0: silent.
+  - interval: 1m
+    input_series:
+      - series: 'saga_orders_stuck_pending{k8s_pod_name="orders-a", service_name="orders"}'
+        values: '0x10'
+      - series: 'saga_orders_stuck_pending{k8s_pod_name="orders-b", service_name="orders"}'
+        values: '0x10'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: OrdersStuckPending
+        exp_alerts: []
+
+  # 20 % of orders take longer than 5 s: the good ratio is 0.8 and the fast burn fires.
+  - interval: 1m
+    input_series:
+      - series: 'saga_order_duration_seconds_bucket{status="confirmed", le="5.0", k8s_pod_name="orders-a"}'
+        values: '0+4x30'
+      - series: 'saga_order_duration_seconds_bucket{status="confirmed", le="+Inf", k8s_pod_name="orders-a"}'
+        values: '0+5x30'
+      - series: 'saga_order_duration_seconds_count{status="confirmed", k8s_pod_name="orders-a"}'
+        values: '0+5x30'
+    promql_expr_test:
+      - expr: saga:slo_good_ratio:rate5m
+        eval_time: 10m
+        exp_samples:
+          - labels: 'saga:slo_good_ratio:rate5m'
+            value: 0.8
+      - expr: saga:slo_good_ratio:rate1h
+        eval_time: 10m
+        exp_samples:
+          - labels: 'saga:slo_good_ratio:rate1h'
+            value: 0.8
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: SagaSLOFastBurn
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              team: saga
+            exp_annotations:
+              summary: "Order SLO (99% final within 5 s) is burning error budget over 14.4x (1h and 5m windows)"
+      - eval_time: 25m
+        alertname: SagaSLOSlowBurn
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              team: saga
+            exp_annotations:
+              summary: "Order SLO (99% final within 5 s) is burning error budget over 6x (6h and 30m windows)"
+
+  # 0.5 % of orders take longer than 5 s: within budget, both SLO alerts silent.
+  - interval: 1m
+    input_series:
+      - series: 'saga_order_duration_seconds_bucket{status="confirmed", le="5.0", k8s_pod_name="orders-a"}'
+        values: '0+995x70'
+      - series: 'saga_order_duration_seconds_count{status="confirmed", k8s_pod_name="orders-a"}'
+        values: '0+1000x70'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: SagaSLOFastBurn
+        exp_alerts: []
+      - eval_time: 60m
+        alertname: SagaSLOFastBurn
+        exp_alerts: []
+      - eval_time: 60m
+        alertname: SagaSLOSlowBurn
+        exp_alerts: []
+
+  # No traffic at all, fresh cluster (Review Focus 5): no SLO series, no SLO alert.
+  - interval: 1m
+    input_series:
+      - series: 'saga_orders_stuck_pending{k8s_pod_name="orders-a"}'
+        values: '0x60'
+    promql_expr_test:
+      - expr: saga:slo_good_ratio:rate5m
+        eval_time: 30m
+        exp_samples: []
+      - expr: saga:slo_good_ratio:rate30m
+        eval_time: 30m
+        exp_samples: []
+      - expr: saga:slo_good_ratio:rate1h
+        eval_time: 30m
+        exp_samples: []
+      - expr: saga:slo_good_ratio:rate6h
+        eval_time: 30m
+        exp_samples: []
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: SagaSLOFastBurn
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: SagaSLOSlowBurn
+        exp_alerts: []
+
+  # Traffic stops (loadgen scaled to 0, Review Focus 5): the counters stay flat, 0/0 must not
+  # turn into a NaN series, and no SLO alert fires.
+  - interval: 1m
+    input_series:
+      - series: 'saga_order_duration_seconds_bucket{status="confirmed", le="5.0", k8s_pod_name="orders-a"}'
+        values: '500x420'
+      - series: 'saga_order_duration_seconds_count{status="confirmed", k8s_pod_name="orders-a"}'
+        values: '1000x420'
+    promql_expr_test:
+      - expr: saga:slo_good_ratio:rate5m
+        eval_time: 400m
+        exp_samples: []
+      - expr: saga:slo_good_ratio:rate30m
+        eval_time: 400m
+        exp_samples: []
+      - expr: saga:slo_good_ratio:rate1h
+        eval_time: 400m
+        exp_samples: []
+      - expr: saga:slo_good_ratio:rate6h
+        eval_time: 400m
+        exp_samples: []
+    alert_rule_test:
+      - eval_time: 400m
+        alertname: SagaSLOFastBurn
+        exp_alerts: []
+      - eval_time: 400m
+        alertname: SagaSLOSlowBurn
+        exp_alerts: []
+
+  # Completed orders by status and reason; a confirmed order has no reason label.
+  - interval: 1m
+    input_series:
+      - series: 'saga_orders_completed_total{status="confirmed", k8s_pod_name="orders-a"}'
+        values: '0+60x10'
+      - series: 'saga_orders_completed_total{status="confirmed", k8s_pod_name="orders-b"}'
+        values: '0+60x10'
+      - series: 'saga_orders_completed_total{status="cancelled", reason="payment_failed", k8s_pod_name="orders-a"}'
+        values: '0+30x10'
+    promql_expr_test:
+      - expr: saga:orders_completed:rate5m
+        eval_time: 10m
+        exp_samples:
+          - labels: 'saga:orders_completed:rate5m{status="confirmed"}'
+            value: 2
+          - labels: 'saga:orders_completed:rate5m{status="cancelled", reason="payment_failed"}'
+            value: 0.5

@@ -38,6 +38,24 @@ spec:
             - name: {{ $name }}
               value: {{ $value | quote }}
             {{- end }}
+            {{- with .Values.otel.endpoint }}
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ . | quote }}
+            - name: OTEL_SERVICE_NAME
+              value: {{ $.Release.Name | quote }}
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: "k8s.pod.name=$(POD_NAME),k8s.namespace.name=$(POD_NAMESPACE)"
+            - name: OTEL_METRIC_EXPORT_INTERVAL
+              value: "15000"
+            {{- end }}
           # The HTTP listener opens only after Postgres and NATS are reachable, so the startup
           # probe gives the service up to two minutes; liveness and readiness start after it.
           startupProbe:

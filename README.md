@@ -96,6 +96,32 @@ Docker Compose and the kind cluster both use host port 8080, so run only one of 
 
 To understand every object, work through the guided tour: [docs/day2-tour.md](docs/day2-tour.md).
 
+## Observability
+
+Day 3 makes the saga observable on the kind cluster. Every service sends traces, metrics and logs over OTLP to one OpenTelemetry Collector, which forwards them to Tempo (traces), Prometheus (metrics) and Loki (logs); Grafana shows all three, and Alertmanager mails saga alerts to Mailpit. `make local-up` installs all of it; nothing is exposed outside the cluster, so the UIs are reached by port-forward. See [ADR 0008](docs/adr/0008-observability-stack.md).
+
+```sh
+make grafana       # Grafana on http://localhost:3000 (user admin; prints the command that reads the password)
+make prom          # Prometheus on http://localhost:9090
+make alerts        # Alertmanager on http://localhost:9093
+make obs-check     # runs every dashboard and rule query against Prometheus; prints OBS OK
+make rules-test    # unit-tests the SLO and alert rules with promtool (Docker, no cluster)
+scripts/trace-check.sh <order_id>   # finds the order's trace in Tempo and its log line in Loki; prints TRACE OK, LOGS OK
+```
+
+`make grafana`, `make prom` and `make alerts` run until Ctrl-C. `make obs-check` needs a few minutes of loadgen traffic after a fresh `make local-up`, because the panels use 5-minute rates.
+
+| Signal | Where | Look for |
+|---|---|---|
+| Traces | Grafana, Explore, Tempo | `{ span.order.id = "<order id>" }` |
+| Logs | Grafana, Explore, Loki | `{service_name="orders"} \| trace_id="<trace id>"`; spans and log lines link to each other |
+| Metrics | Grafana, dashboard **Order saga** | orders/s, final-state latency, SLO and burn rate, payment failures, dead letters, consumer backlog, stuck PENDING |
+| Alerts | Mailpit (`kubectl --context kind-order-saga port-forward -n platform svc/mailpit 8025:8025`) | emails to `oncall@example.local` |
+
+The SLO is "99 % of orders reach a final state within 5 s", with multi-window burn-rate alerts. The other saga alerts are a high payment failure ratio, dead-lettered events and orders stuck in PENDING (the safety net for the missing outbox). Dashboard and rules live in `charts/saga-observability`.
+
+To understand every piece, work through the guided tour: [docs/day3-tour.md](docs/day3-tour.md).
+
 ## Decisions
 
 | ADR | Decision |
@@ -107,6 +133,7 @@ To understand every object, work through the guided tour: [docs/day2-tour.md](do
 | [0005](docs/adr/0005-kind-local-cluster.md) | kind as the local Kubernetes cluster |
 | [0006](docs/adr/0006-generic-helm-chart.md) | One generic Helm chart for the Go services |
 | [0007](docs/adr/0007-gateway-api-envoy-gateway.md) | Gateway API with Envoy Gateway as the entry point |
+| [0008](docs/adr/0008-observability-stack.md) | Observability: OTel Collector, Tempo, Loki, Prometheus and Grafana |
 
 ## Delivery semantics
 
@@ -152,3 +179,15 @@ Before day 3 starts, the author checks that they own this part:
 - [ ] Explain in own words: Deployment vs StatefulSet, liveness vs readiness, Service vs Gateway/HTTPRoute, requests vs limits, why the Secret is created by a script
 - [ ] Delete a pod of each service while watching `kubectl --context kind-order-saga get pods -n shop -w` (Postgres and NATS are in `-n platform`); confirm orders keep completing
 - [ ] Read the ADRs 0005–0007 and be able to defend them
+
+## Day 3 checkpoint
+
+Before day 4 starts, the author checks that they own this part:
+
+- [ ] `make local-down && make local-up && make local-smoke && make obs-check` → `SMOKE OK`, `OBS OK` (give loadgen a few minutes before `make obs-check`)
+- [ ] Work through [docs/day3-tour.md](docs/day3-tour.md) top to bottom
+- [ ] Open one order's trace in Grafana and name every span in it
+- [ ] Jump from a trace to its logs and back
+- [ ] Run the payment-outage drill and receive the alert email
+- [ ] Explain in own words: span vs trace vs context propagation, counter vs histogram, SLI/SLO/error budget/burn rate, why the Collector sits in the middle
+- [ ] Read ADR 0008 and be able to defend it

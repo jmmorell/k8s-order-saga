@@ -27,6 +27,17 @@ reloader:
       requests: {cpu: 10m, memory: 16Mi}
       limits: {cpu: 50m, memory: 32Mi}
 
+# prometheus-nats-exporter sidecar (JetStream stream and consumer metrics: DLQ size, consumer
+# lag) and a PodMonitor for it; the image tag is the chart default, pinned by the chart version.
+promExporter:
+  enabled: true
+  merge:
+    resources:
+      requests: {cpu: 10m, memory: 16Mi}
+      limits: {cpu: 100m, memory: 48Mi}
+  podMonitor:
+    enabled: true
+
 podDisruptionBudget:
   enabled: false
 

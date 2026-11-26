@@ -1,0 +1,29 @@
+# Tempo single binary with local storage on an emptyDir: traces live 6 h and do not survive a
+# pod restart. Values for grafana-community/tempo; the image tag is the chart's appVersion.
+# Only the Collector sends to it, over OTLP/gRPC (the chart always opens its Jaeger and Zipkin ports).
+fullnameOverride: tempo
+
+tempo:
+  retention: 6h
+  reportingEnabled: false
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+        http:
+          endpoint: 0.0.0.0:4318
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {cpu: 500m, memory: 512Mi}
+  extraVolumeMounts:
+    - name: data
+      mountPath: /var/tempo
+
+extraVolumes:
+  - name: data
+    emptyDir:
+      sizeLimit: 2Gi
+
+persistence:
+  enabled: false

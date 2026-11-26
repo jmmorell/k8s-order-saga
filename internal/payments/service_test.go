@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"os"
 	"testing"
 	"time"
 
@@ -13,11 +14,14 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/nats-io/nats.go/jetstream"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/attribute"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 
 	"github.com/jmmorell/k8s-order-saga/internal/payments"
 	"github.com/jmmorell/k8s-order-saga/internal/platform/events"
 	"github.com/jmmorell/k8s-order-saga/internal/platform/logx"
 	"github.com/jmmorell/k8s-order-saga/internal/platform/pgutil"
+	"github.com/jmmorell/k8s-order-saga/internal/platform/telemetry/telemetrytest"
 	"github.com/jmmorell/k8s-order-saga/internal/platform/testinfra"
 )
 
@@ -242,4 +246,49 @@ func TestLogs_TransitionsAtInfoRedeliveryAtDebug(t *testing.T) {
 	all = logLines(t, &failBuf)
 	require.Len(t, linesWith(all, "payment failed"), 1)
 	require.Len(t, linesWith(all, "re-published stored outcome"), 1)
+}
+
+var reader *sdkmetric.ManualReader
+
+func TestMain(m *testing.M) {
+	reader = telemetrytest.NewReader()
+	os.Exit(m.Run())
+}
+
+func TestPayments_RepublishDoesNotCount(t *testing.T) {
+	e := setup(t)
+	count := func(result string) int64 {
+		return telemetrytest.Sum(t, reader, "saga.payments", attribute.String("result", result))
+	}
+	succeeded, failed := count("succeeded"), count("failed")
+
+	env := reserved(t, uuid.New(), 2000)
+	require.NoError(t, e.service(0).HandleInventoryReserved(context.Background(), env))
+	require.NoError(t, e.service(0).HandleInventoryReserved(context.Background(), env))
+	require.EqualValues(t, succeeded+1, count("succeeded"))
+	require.EqualValues(t, failed, count("failed"))
+
+	require.NoError(t, e.service(1).HandleInventoryReserved(context.Background(), reserved(t, uuid.New(), 2000)))
+	require.EqualValues(t, failed+1, count("failed"))
+}
+
+func TestPayments_CountedEvenWhenPublishFails(t *testing.T) {
+	e := setup(t)
+	ctx := context.Background()
+	count := func() int64 {
+		return telemetrytest.Sum(t, reader, "saga.payments", attribute.String("result", "succeeded"))
+	}
+	before := count()
+
+	nc, js, err := events.Connect(ctx, testinfra.NATS(t), "closed")
+	require.NoError(t, err)
+	nc.Close()
+	broken := payments.NewService(e.pool, js, payments.Config{}, slog.New(slog.DiscardHandler))
+
+	env := reserved(t, uuid.New(), 2000)
+	require.Error(t, broken.HandleInventoryReserved(ctx, env), "publish must fail")
+	require.EqualValues(t, before+1, count(), "the committed payment is counted before the publish")
+
+	require.NoError(t, e.service(0).HandleInventoryReserved(ctx, env), "redelivery")
+	require.EqualValues(t, before+1, count(), "redelivery does not count again")
 }

@@ -6,3 +6,6 @@ env:
   TARGET_URL: http://orders.shop.svc.cluster.local:8080
   RATE_PER_SEC: "2"
   OUT_OF_STOCK_RATIO: "0.05"
+
+otel:
+  endpoint: http://otel-collector.observability.svc.cluster.local:4318

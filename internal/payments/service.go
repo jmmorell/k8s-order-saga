@@ -125,16 +125,25 @@ func (s *Service) HandleInventoryReserved(ctx context.Context, e events.Envelope
 		return err
 	}
 
+	// Count right after the commit: a failed publish is redelivered with
+	// created=false, so counting after it would lose the payment.
+	if created {
+		result := "failed"
+		if p.Status == statusSucceeded {
+			result = "succeeded"
+		}
+		recordPayment(ctx, result)
+	}
 	if p.Status == statusSucceeded {
 		if err := s.publish(ctx, events.PaymentSucceeded, e,
 			events.PaymentSucceededPayload{PaymentID: p.ID, AmountCents: p.AmountCents}); err != nil {
 			return err
 		}
 		if created {
-			s.log.Info("payment succeeded", "order_id", e.OrderID.String(),
+			s.log.InfoContext(ctx, "payment succeeded", "order_id", e.OrderID.String(),
 				"payment_id", p.ID.String(), "amount_cents", p.AmountCents)
 		} else {
-			s.logRepublished(e, events.PaymentSucceeded)
+			s.logRepublished(ctx, e, events.PaymentSucceeded)
 		}
 		return nil
 	}
@@ -142,15 +151,15 @@ func (s *Service) HandleInventoryReserved(ctx context.Context, e events.Envelope
 		return err
 	}
 	if created {
-		s.log.Info("payment failed", "order_id", e.OrderID.String(), "reason", events.ReasonDeclined)
+		s.log.InfoContext(ctx, "payment failed", "order_id", e.OrderID.String(), "reason", events.ReasonDeclined)
 	} else {
-		s.logRepublished(e, events.PaymentFailed)
+		s.logRepublished(ctx, e, events.PaymentFailed)
 	}
 	return nil
 }
 
-func (s *Service) logRepublished(e events.Envelope, subject events.Subject) {
-	s.log.Debug("re-published stored outcome", "order_id", e.OrderID.String(), "subject", string(subject))
+func (s *Service) logRepublished(ctx context.Context, e events.Envelope, subject events.Subject) {
+	s.log.DebugContext(ctx, "re-published stored outcome", "order_id", e.OrderID.String(), "subject", string(subject))
 }
 
 func (s *Service) publish(ctx context.Context, subject events.Subject, cause events.Envelope, payload any) error {

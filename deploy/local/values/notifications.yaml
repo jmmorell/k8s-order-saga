@@ -5,3 +5,6 @@ image:
 env:
   NATS_URL: nats://nats.platform.svc.cluster.local:4222
   SMTP_ADDR: mailpit.platform.svc.cluster.local:1025
+
+otel:
+  endpoint: http://otel-collector.observability.svc.cluster.local:4318

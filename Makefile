@@ -1,4 +1,4 @@
-.PHONY: test test-short lint build up down logs smoke order dlq chart-test local-up local-down local-status local-smoke local-dlq local-reload
+.PHONY: test test-short lint build up down logs smoke order dlq chart-test local-up local-down local-status local-smoke local-dlq local-reload grafana prom alerts rules-test obs-check
 
 test:
 	go test -race ./...
@@ -63,3 +63,27 @@ local-dlq:
 # Rebuilds the five images, loads them into kind and restarts the Deployments.
 local-reload:
 	./scripts/local-up.sh reload
+
+# Port-forwards Grafana to http://localhost:3000 (user admin). Ctrl-C stops it.
+grafana:
+	@echo "Grafana on http://localhost:3000, user admin. Password:"
+	@echo "  kubectl --context kind-order-saga -n observability get secret grafana-admin -o jsonpath='{.data.admin-password}' | base64 --decode; echo"
+	kubectl --context kind-order-saga -n observability port-forward svc/kps-grafana 3000:80
+
+# Port-forwards Prometheus to http://localhost:9090. Ctrl-C stops it.
+prom:
+	kubectl --context kind-order-saga -n observability port-forward svc/kps-prometheus 9090:9090
+
+# Port-forwards Alertmanager to http://localhost:9093. Ctrl-C stops it.
+alerts:
+	kubectl --context kind-order-saga -n observability port-forward svc/kps-alertmanager 9093:9093
+
+# Unit-tests the saga alert and recording rules with promtool from the pinned Prometheus image.
+rules-test:
+	@. ./deploy/local/versions.env && docker run --rm \
+	  -v "$(CURDIR)/charts/saga-observability/rules:/rules:ro" -w /rules \
+	  --entrypoint promtool "$$PROMETHEUS_IMAGE" test rules saga.rules.test.yaml
+
+# Runs every dashboard and rule query against the live Prometheus; prints OBS OK.
+obs-check:
+	./scripts/obs-check.sh

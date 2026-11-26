@@ -91,6 +91,11 @@ func Run(ctx context.Context, cfg Config, log *slog.Logger) error {
 	}
 
 	svc := NewService(pool, js, log)
+	unregister, err := svc.RegisterMetrics()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = unregister() }()
 	for _, spec := range []events.ConsumerSpec{
 		{Stream: "INVENTORY", Durable: "orders", Subjects: []events.Subject{events.InventoryRejected}},
 		{Stream: "PAYMENTS", Durable: "orders", Subjects: []events.Subject{events.PaymentSucceeded, events.PaymentFailed}},

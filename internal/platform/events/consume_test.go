@@ -14,8 +14,10 @@ import (
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/jmmorell/k8s-order-saga/internal/platform/events"
+	"github.com/jmmorell/k8s-order-saga/internal/platform/telemetry/telemetrytest"
 	"github.com/jmmorell/k8s-order-saga/internal/platform/testinfra"
 )
 
@@ -241,4 +243,43 @@ func TestConsume_PanickingHandlerGoesToDLQAndDoesNotCrash(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("no DLQ message")
 	}
+}
+
+func TestConsume_CountsOutcomes(t *testing.T) {
+	_, js := setup(t)
+	consumed := func(result string) int64 {
+		return telemetrytest.Sum(t, reader, "saga.events.consumed",
+			attribute.String("durable", "metrics"), attribute.String("subject", "orders.created"), attribute.String("result", result))
+	}
+	published := func() int64 {
+		return telemetrytest.Sum(t, reader, "saga.events.published", attribute.String("subject", "orders.created"))
+	}
+	ack, retry, dead, pub := consumed("ack"), consumed("retry"), consumed("dead_letter"), published()
+
+	okOrder, flakyOrder, poisonOrder := uuid.New(), uuid.New(), uuid.New()
+	var mu sync.Mutex
+	seen := map[uuid.UUID]int{}
+	startConsumer(t, js, events.ConsumerSpec{
+		Stream: "ORDERS", Durable: "metrics", Subjects: []events.Subject{events.OrderCreated},
+		MaxDeliver: 3, NakDelays: []time.Duration{20 * time.Millisecond},
+	}, func(_ context.Context, e events.Envelope) error {
+		mu.Lock()
+		defer mu.Unlock()
+		seen[e.OrderID]++
+		switch {
+		case e.OrderID == poisonOrder:
+			return fmt.Errorf("bad input: %w", events.ErrPermanent)
+		case e.OrderID == flakyOrder && seen[e.OrderID] == 1:
+			return errors.New("transient")
+		}
+		return nil
+	})
+	for _, id := range []uuid.UUID{okOrder, flakyOrder, poisonOrder} {
+		publishCreated(t, js, id)
+	}
+
+	require.Eventually(t, func() bool {
+		return consumed("ack") == ack+2 && consumed("retry") == retry+1 && consumed("dead_letter") == dead+1
+	}, 10*time.Second, 20*time.Millisecond)
+	require.EqualValues(t, pub+3, published())
 }

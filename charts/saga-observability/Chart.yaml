@@ -1,0 +1,5 @@
+apiVersion: v2
+name: saga-observability
+description: Grafana dashboard, SLO recording rules and alerts of the order saga, for kube-prometheus-stack.
+type: application
+version: 0.1.0

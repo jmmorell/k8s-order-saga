@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -21,6 +22,7 @@ func (s *Service) HandleResult(ctx context.Context, e events.Envelope) error {
 		email  string
 		amount *int64
 		closed bool // this call moved the order out of PENDING
+		took   time.Duration
 	)
 	err := pgutil.InTx(ctx, s.pool, func(tx pgx.Tx) error {
 		var stored *string
@@ -58,16 +60,22 @@ func (s *Service) HandleResult(ctx context.Context, e events.Envelope) error {
 		default:
 			return fmt.Errorf("unexpected event %s: %w", e.Type, events.ErrPermanent)
 		}
-		if _, err := tx.Exec(ctx,
-			`UPDATE orders SET status = $2, reason = NULLIF($3, ''), amount_cents = $4, updated_at = now() WHERE id = $1`,
-			e.OrderID, status, reason, amount); err != nil {
+		var seconds float64 // computed by the database: now() is not subject to clock skew between pods
+		if err := tx.QueryRow(ctx,
+			`UPDATE orders SET status = $2, reason = NULLIF($3, ''), amount_cents = $4, updated_at = now() WHERE id = $1
+			 RETURNING extract(epoch FROM now() - created_at)::float8`,
+			e.OrderID, status, reason, amount).Scan(&seconds); err != nil {
 			return fmt.Errorf("update order: %w", err)
 		}
+		took = time.Duration(seconds * float64(time.Second))
 		closed = true
 		return nil
 	})
 	if err != nil {
 		return err
+	}
+	if closed {
+		recordCompleted(ctx, status, reason, took)
 	}
 
 	switch status {
@@ -77,9 +85,9 @@ func (s *Service) HandleResult(ctx context.Context, e events.Envelope) error {
 			return err
 		}
 		if closed {
-			s.log.Info("order confirmed", "order_id", e.OrderID.String(), "amount_cents", *amount)
+			s.log.InfoContext(ctx, "order confirmed", "order_id", e.OrderID.String(), "amount_cents", *amount)
 		} else {
-			s.logRepublished(e, events.OrderConfirmed)
+			s.logRepublished(ctx, e, events.OrderConfirmed)
 		}
 	case StatusCancelled:
 		if err := s.publish(ctx, events.OrderCancelled, e,
@@ -87,16 +95,16 @@ func (s *Service) HandleResult(ctx context.Context, e events.Envelope) error {
 			return err
 		}
 		if closed {
-			s.log.Info("order cancelled", "order_id", e.OrderID.String(), "reason", reason)
+			s.log.InfoContext(ctx, "order cancelled", "order_id", e.OrderID.String(), "reason", reason)
 		} else {
-			s.logRepublished(e, events.OrderCancelled)
+			s.logRepublished(ctx, e, events.OrderCancelled)
 		}
 	}
 	return nil
 }
 
-func (s *Service) logRepublished(e events.Envelope, subject events.Subject) {
-	s.log.Debug("re-published stored outcome", "order_id", e.OrderID.String(), "subject", string(subject))
+func (s *Service) logRepublished(ctx context.Context, e events.Envelope, subject events.Subject) {
+	s.log.DebugContext(ctx, "re-published stored outcome", "order_id", e.OrderID.String(), "subject", string(subject))
 }
 
 func (s *Service) publish(ctx context.Context, subject events.Subject, cause events.Envelope, payload any) error {

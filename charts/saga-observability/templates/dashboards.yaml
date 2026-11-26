@@ -1,0 +1,15 @@
+# One ConfigMap per dashboards/*.json; the Grafana sidecar picks them up by label.
+{{- range $path, $_ := .Files.Glob "dashboards/*.json" }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $.Release.Name }}-{{ base $path | trimSuffix ".json" }}
+  labels:
+    app.kubernetes.io/name: {{ $.Chart.Name }}
+    app.kubernetes.io/instance: {{ $.Release.Name }}
+    {{- toYaml $.Values.dashboardLabels | nindent 4 }}
+data:
+  {{ base $path }}: |-
+{{ $.Files.Get $path | indent 4 }}
+{{- end }}

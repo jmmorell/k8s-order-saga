@@ -1,0 +1,10 @@
+# The rule file is embedded unchanged, so promtool's tests cover exactly what ships.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+{{ .Files.Get "rules/saga.rules.yaml" | indent 2 }}

@@ -1,6 +1,6 @@
-# Backlog — deferred findings from day-1 reviews
+# Backlog — deferred findings from the reviews
 
-Minor findings the task and final reviews raised and deliberately left open. None blocks day 2.
+Minor findings the task and final reviews raised and deliberately left open, grouped by the day that found them. None blocks the day after it.
 
 ## Messaging (`internal/platform/events`)
 - Cancelling the context passed to `Consume` does not stop the subscription; callers must call `stop()`.
@@ -61,3 +61,18 @@ Minor findings the task and final reviews raised and deliberately left open. Non
 - No `topologySpreadConstraints` or PodDisruptionBudget for the two `orders` replicas.
 - No `GOMEMLIMIT` derived from the memory limit.
 - Day-4 notes: the `postgres` Secret is created outside Git (Argo-synced pods wait for it); `platform` will not pass Pod Security `restricted` as-is; `automountServiceAccountToken: false` is not set yet.
+
+## Day 3
+- Telemetry setup: the 1 s bound in `TestSetup_UnreachableCollectorDoesNotBlock` may flake on a slow machine; the five `cmd/*/main.go` repeat the same telemetry setup/shutdown boilerplate.
+- Tracing: `consume.go` repeats the messaging attribute literals that `messagingAttrs` in `tracing.go` already builds; loadgen's outgoing `traceparent` has no test.
+- `PROMETHEUS_IMAGE` (promtool for `make rules-test`) must match the Prometheus version kube-prometheus-stack deploys, but nothing enforces it; the image tags of the charts' sub-components are pinned only through the chart versions.
+- SLO rule tests lack a 5 % slow-burn case (only the 20 % case fires both alerts) and value checks for the 30m and 6h ratios.
+- `obs-check.sh` and `trace-check.sh` wait for their port-forward by polling the local port, which also succeeds against a stale listener left on that port; `obs-check.sh` does not abort when Prometheus never becomes ready (the queries then fail one by one).
+- Loki's retention is set to 6 h, below the 24 h index period that Loki's compactor retention is designed around; it may not be honoured exactly (data can live longer than 6 h). The `emptyDir` bounds it anyway.
+- Loki indexes `k8s_pod_name` as a stream label (its default OTLP mapping); fine locally, but every pod restart creates new streams. Moving it to structured metadata would be the choice under pod churn.
+- `OrdersStuckPending` can fire after a NATS outage longer than 2 minutes: orders published but not finished when NATS stopped stay PENDING until it returns. They complete by themselves, so the page is noise in that case.
+- `obs-check.sh` and `trace-check.sh` also need `python3` on the host (like `make local-dlq`).
+- `EventsDeadLettered`: its second term (`or ... unless ... offset 10m`) also fires once, about 10 minutes after a Collector outage or a Prometheus restart, while any `dead_letter > 0` series exists (the tour section 1 drill scales the Collector to 0).
+- The dashboard "dead-lettered/s" panel misses a pod's first dead letter for the same reason (no previous sample to take a rate from); the DLQ size line covers it.
+- kube-prometheus-stack's default `CPUThrottlingHigh` fires for node-exporter and the Grafana dashboard sidecar (routed to the null receiver, so no email); their 100m CPU limits are tight.
+- The `reason` label of `saga.orders.completed` comes from the event payload unvalidated; it is bounded in practice (only our constants are ever published) but could be clamped to the known set.

@@ -12,6 +12,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/jmmorell/k8s-order-saga/internal/platform/events"
 )
@@ -64,8 +67,25 @@ func newRootMux(health, api http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/healthz", health)
 	mux.Handle("/readyz", health)
-	mux.Handle("/", api)
+	mux.Handle("/", traced(api))
 	return mux
+}
+
+// traced records a server span per API request, named after the route the
+// inner mux matched. otelhttp renames the span once the handler returns, when
+// r.Pattern is known; before that (and on a 404) the root pattern "/" gives
+// way to the method alone.
+func traced(api http.Handler) http.Handler {
+	// WithServerName pins server.address: otherwise otelhttp copies the
+	// client-controlled Host header into it, on spans and metrics alike.
+	return otelhttp.NewHandler(api, "orders",
+		otelhttp.WithServerName("orders"),
+		otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
+			if r.Pattern == "" || r.Pattern == "/" {
+				return r.Method
+			}
+			return r.Pattern
+		}))
 }
 
 // Routes returns the API routes.
@@ -104,15 +124,16 @@ func (s *Service) create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id := uuid.New()
+	trace.SpanFromContext(r.Context()).SetAttributes(attribute.String("order.id", id.String()))
 	items, err := json.Marshal(req.Items)
 	if err != nil {
-		s.fail(w, "marshal items", err)
+		s.fail(r.Context(), w, "marshal items", err)
 		return
 	}
 	if _, err := s.pool.Exec(r.Context(),
 		`INSERT INTO orders (id, customer_email, items, status) VALUES ($1, $2, $3, $4)`,
 		id, req.CustomerEmail, items, StatusPending); err != nil {
-		s.fail(w, "insert order", err)
+		s.fail(r.Context(), w, "insert order", err)
 		return
 	}
 
@@ -128,17 +149,18 @@ func (s *Service) create(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// Without the event the saga never starts: do not leave a PENDING order behind.
 		if _, derr := s.pool.Exec(context.WithoutCancel(r.Context()), `DELETE FROM orders WHERE id = $1`, id); derr != nil {
-			s.log.Error("delete order after failed publish", "error", derr, "order_id", id)
+			s.log.ErrorContext(r.Context(), "delete order after failed publish", "error", derr, "order_id", id)
 		}
-		s.fail(w, "publish orders.created", err)
+		s.fail(r.Context(), w, "publish orders.created", err)
 		return
 	}
-	s.log.Info("order created", "order_id", id.String(), "items", len(req.Items))
+	createdCounter.Add(r.Context(), 1)
+	s.log.InfoContext(r.Context(), "order created", "order_id", id.String(), "items", len(req.Items))
 	writeJSON(w, http.StatusAccepted, map[string]any{"id": id, "status": StatusPending})
 }
 
-func (s *Service) fail(w http.ResponseWriter, msg string, err error) {
-	s.log.Error(msg, "error", err)
+func (s *Service) fail(ctx context.Context, w http.ResponseWriter, msg string, err error) {
+	s.log.ErrorContext(ctx, msg, "error", err)
 	writeError(w, http.StatusServiceUnavailable, "temporarily unavailable")
 }
 
@@ -148,6 +170,7 @@ func (s *Service) get(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "id must be a UUID")
 		return
 	}
+	trace.SpanFromContext(r.Context()).SetAttributes(attribute.String("order.id", id.String()))
 	var (
 		o      Order
 		reason *string
@@ -161,7 +184,7 @@ func (s *Service) get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		s.fail(w, "read order", err)
+		s.fail(r.Context(), w, "read order", err)
 		return
 	}
 	if reason != nil {

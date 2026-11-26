@@ -1,4 +1,4 @@
-.PHONY: test test-short lint build up down logs smoke order dlq chart-test local-up local-down local-status local-smoke local-dlq local-reload grafana prom alerts rules-test obs-check secrets-scan policy-test
+.PHONY: test test-short lint build up down logs smoke order dlq chart-test local-up local-down local-status local-smoke local-dlq local-reload grafana prom alerts rules-test obs-check secrets-scan policy-test ci-local
 
 test:
 	go test -race ./...
@@ -95,3 +95,9 @@ secrets-scan:
 # Checks Pod Security (levels, rejected privileged pods, no violating pods) and the NetworkPolicies (curl probes) against the live cluster; prints POLICY OK.
 policy-test:
 	./scripts/policy-test.sh
+
+# Lints the GitHub workflows with the pinned actionlint image (with shellcheck), then tests
+# scripts/bump-image-tag.sh; prints BUMP OK. Needs docker.
+ci-local:
+	@. ./deploy/local/versions.env && docker run --rm -v "$(CURDIR):/repo:ro" -w /repo "$$ACTIONLINT_IMAGE" -color
+	./scripts/bump-image-tag_test.sh

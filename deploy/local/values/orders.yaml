@@ -1,8 +1,8 @@
 replicaCount: 2
 
 image:
-  repository: k8s-order-saga/orders
-  tag: dev
+  repository: ghcr.io/jmmorell/k8s-order-saga/orders
+  tag: "dev"
 
 secretEnv:
   - name: POSTGRES_PASSWORD

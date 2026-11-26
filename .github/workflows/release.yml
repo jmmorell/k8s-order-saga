@@ -1,0 +1,140 @@
+# Builds the five service images for linux/amd64 and linux/arm64 and scans them with Trivy.
+#   pull_request:      build and scan only; nothing is pushed.
+#   workflow_dispatch: (from main) build, scan, push ghcr.io/jmmorell/k8s-order-saga/<service>:<short-sha>
+#                      and :latest-main, then commit the new image.tag to main for Argo CD.
+#                      gh workflow run release.yml --ref main
+# Deployment only ever reads the tag committed to deploy/local/values/<service>.yaml, never
+# :latest-main. No cluster credentials: Argo CD pulls the change from Git.
+name: release
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Dispatches share the group 'release' and queue (never cancelled mid-run), so two releases never
+# race on main. Pull-request runs get a group per PR, so they never displace a queued release.
+concurrency:
+  group: ${{ github.event_name == 'workflow_dispatch' && 'release' || format('release-pr-{0}', github.ref) }}
+  cancel-in-progress: false
+
+env:
+  IMAGE_PREFIX: ghcr.io/jmmorell/k8s-order-saga
+
+jobs:
+  image:
+    name: image (${{ matrix.service }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [orders, inventory, payments, notifications, loadgen]
+    steps:
+      - name: Releases are dispatched from main only
+        if: github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main'
+        run: |
+          echo "FAIL: dispatch release.yml with --ref main (got $GITHUB_REF)" >&2
+          exit 1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Load pinned versions and the short SHA
+        id: meta
+        run: |
+          grep -E '^[A-Z0-9_]+=' deploy/local/versions.env >> "$GITHUB_ENV"
+          echo "tag=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      # Both architectures. The Dockerfile cross-compiles, so no QEMU is needed. The result stays
+      # in the build cache; the push step below reuses it.
+      - name: Build linux/amd64 and linux/arm64
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          build-args: SERVICE=${{ matrix.service }}
+          platforms: linux/amd64,linux/arm64
+          push: false
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,scope=${{ matrix.service }},mode=max
+
+      # A copy for the runner's own architecture, loaded into Docker for Trivy.
+      - name: Build the scan copy
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          build-args: SERVICE=${{ matrix.service }}
+          load: true
+          tags: scan/${{ matrix.service }}:${{ steps.meta.outputs.tag }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+
+      - name: Trivy (fixable HIGH and CRITICAL fail the job)
+        env:
+          IMAGE: scan/${{ matrix.service }}:${{ steps.meta.outputs.tag }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/trivy-cache"
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$RUNNER_TEMP/trivy-cache:/root/.cache/trivy" "$TRIVY_IMAGE" \
+            image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 --no-progress "$IMAGE"
+
+      - name: Log in to GHCR
+        if: github.event_name == 'workflow_dispatch'
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push <short-sha> and latest-main
+        if: github.event_name == 'workflow_dispatch'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          build-args: SERVICE=${{ matrix.service }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:${{ steps.meta.outputs.tag }}
+            ${{ env.IMAGE_PREFIX }}/${{ matrix.service }}:latest-main
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+
+  # Commits the new tag to main once all five images are pushed. The commit says [skip ci], and a
+  # push made with GITHUB_TOKEN starts no workflow anyway, so the bump never triggers itself.
+  bump:
+    needs: image
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Commit image tag to main
+        run: |
+          tag=${GITHUB_SHA::7}
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          scripts/bump-image-tag.sh "$tag"
+          if git diff --quiet; then
+            echo "main already deploys $tag"
+            exit 0
+          fi
+          git add deploy/local/values/{orders,inventory,payments,notifications,loadgen}.yaml
+          git commit -m "chore(deploy): image tag $tag [skip ci]"
+          # main moved since the checkout: rebase once and retry. A conflict or a second rejection
+          # fails the job; nothing is forced, so no one else's commit is overwritten.
+          if ! git push origin HEAD:main; then
+            git pull --rebase origin main
+            git push origin HEAD:main
+          fi

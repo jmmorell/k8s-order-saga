@@ -177,14 +177,25 @@ install_gateway() {
   "${K[@]}" -n shop wait --for=condition=Programmed gateway/shop --timeout=180s
 }
 
+# Prints <image.repository>:<image.tag> from deploy/local/values/<service>.yaml (the tag unquoted),
+# the reference the chart deploys, so the cluster never pulls a tag built here from the registry.
+image_ref() {
+  awk '/^image:[[:space:]]*$/ {f=1; next} f && /^[^[:space:]#]/ {f=0}
+    f && $1 == "repository:" {r=$2} f && $1 == "tag:" {t=$2}
+    END {gsub(/"/, "", r); gsub(/"/, "", t); if (r == "" || t == "") exit 1; print r ":" t}' \
+    "deploy/local/values/$1.yaml" || { echo "deploy/local/values/$1.yaml: no image.repository or image.tag" >&2; exit 1; }
+}
+
+# Builds each service for the host's architecture (kind load cannot load a multi-arch image).
 build_and_load_images() {
   echo "==> building and loading service images"
-  local svc
+  local svc ref images=()
   for svc in "${SERVICES[@]}"; do
-    docker build -q --build-arg SERVICE="$svc" -t "k8s-order-saga/$svc:dev" . >/dev/null
+    ref=$(image_ref "$svc")
+    docker build -q --build-arg SERVICE="$svc" -t "$ref" . >/dev/null
+    images+=("$ref")
   done
-  local images=()
-  for svc in "${SERVICES[@]}"; do images+=("k8s-order-saga/$svc:dev"); done
+  echo "    ${images[*]}"
   kind load docker-image --name "$CLUSTER" "${images[@]}"
 }
 

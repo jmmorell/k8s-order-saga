@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Offline test of charts/service and charts/saga-observability: lint, schema validation and
-# a few structural assertions on the rendered manifests. Needs helm and kubeconform, no cluster.
+# Offline test of charts/service, charts/saga-observability and deploy/argocd/apps: lint, schema
+# validation and a few structural assertions on the rendered manifests. Needs helm, kubeconform
+# and ruby (YAML parsing), no cluster.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -44,6 +45,19 @@ for svc in $services; do
     "- name: OTEL_METRIC_EXPORT_INTERVAL" 'value: "15000"'; do
     expect "$svc" "$s" "$out"
   done
+  # No ServiceAccount token, on the ServiceAccount and on the pod (ADR 0009).
+  sa=$(render "$svc" --show-only templates/serviceaccount.yaml)
+  grep -qx 'automountServiceAccountToken: false' <<<"$sa" ||
+    fail "$svc: ServiceAccount lacks automountServiceAccountToken: false"
+  deploy=$(render "$svc" --show-only templates/deployment.yaml)
+  grep -qx '      automountServiceAccountToken: false' <<<"$deploy" ||
+    fail "$svc: pod spec lacks automountServiceAccountToken: false"
+  # The pod-level securityContext: the block at the pod spec's indentation (6 spaces).
+  podsc=$(awk '/^      securityContext:$/ {f=1; next} f && /^        / {print; next} f {exit}' <<<"$deploy")
+  for s in "runAsNonRoot: true" "runAsUser: 65532" "runAsGroup: 65532" "seccompProfile:" "type: RuntimeDefault"; do
+    grep -qF -- "$s" <<<"$podsc" || fail "$svc: pod securityContext lacks '$s'"
+  done
+
   pod=$(awk '/- name: POD_NAME$/ {print NR; exit}' <<<"$out")
   attrs=$(awk '/- name: OTEL_RESOURCE_ATTRIBUTES/ {print NR; exit}' <<<"$out")
   [ -n "$pod" ] && [ -n "$attrs" ] || fail "$svc: POD_NAME or OTEL_RESOURCE_ATTRIBUTES env entry missing"
@@ -87,5 +101,62 @@ diff <(sed '/^$/d' "$obs/rules/saga.rules.yaml") <(echo "$rule") >/dev/null ||
   fail "saga-observability: PrometheusRule spec differs from rules/saga.rules.yaml"
 python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["uid"]=="saga" and d["title"]=="Order saga"' \
   "$obs/dashboards/saga.json" || fail "saga-observability: dashboards/saga.json is not the Order saga dashboard"
+
+# deploy/argocd/apps: the app-of-apps chart (ADR 0010). One Argo CD Application per workload
+# piece, every one pointing at the same repo and revision, with automated sync, prune and
+# self-heal, and none of them creating a namespace (local-up.sh owns those).
+echo "== argocd apps"
+apps=deploy/argocd/apps
+repo=https://github.com/jmmorell/k8s-order-saga.git
+helm lint --strict "$apps"
+out=$(helm template apps "$apps" --namespace argocd)
+# No Application schema offline; the structure is asserted below.
+kubeconform -strict -summary -skip Application <<<"$out"
+
+# Prints one line per Application: name, namespace, repo, revision, path, release, destination
+# namespace, value files, prune, selfHeal, CreateNamespace option.
+app_table() {
+  ruby -ryaml -e '
+    YAML.load_stream($stdin.read).each do |d|
+      next unless d.is_a?(Hash) && d["kind"] == "Application"
+      s = d["spec"]; src = s["source"]; h = src["helm"] || {}
+      auto = (s["syncPolicy"] || {})["automated"] || {}
+      opts = (s["syncPolicy"] || {})["syncOptions"] || []
+      files = (h["valueFiles"] || []).join(",")
+      puts [d["metadata"]["name"], d["metadata"]["namespace"] || "-", src["repoURL"],
+            src["targetRevision"], src["path"], h["releaseName"] || "-",
+            s["destination"]["namespace"] || "-", files.empty? ? "-" : files,
+            auto["prune"] == true, auto["selfHeal"] == true,
+            opts.any? { |o| o.start_with?("CreateNamespace=true") }].join(" ")
+    end'
+}
+
+table=$(app_table <<<"$out")
+[ "$(wc -l <<<"$table")" -eq 7 ] || fail "argocd apps: expected 7 Applications, got:"$'\n'"$table"
+# expect_app <name> <path> <release> <destination namespace> <value files>
+expect_app() {
+  local want="$1 argocd $repo main $2 $3 $4 $5 true true false"
+  grep -qxF -- "$want" <<<"$table" || fail "argocd apps: no Application '$want' in:"$'\n'"$table"
+}
+for svc in $services; do
+  expect_app "svc-$svc" charts/service "$svc" shop "../../deploy/local/values/$svc.yaml"
+done
+expect_app saga-observability charts/saga-observability saga-observability observability -
+expect_app policies deploy/local/policies - - -
+# Every value file an Application names exists, relative to its chart.
+for f in $(awk '$8 != "-" {print $5 "/" $8}' <<<"$table" | tr ',' '\n'); do
+  [ -f "$f" ] || fail "argocd apps: value file $f does not exist"
+done
+# The revision value reaches every Application.
+rev=$(helm template apps "$apps" --namespace argocd --set revision=some/branch | app_table | awk '{print $4}' | sort -u)
+[ "$rev" = some/branch ] || fail "argocd apps: revision=some/branch rendered targetRevision '$rev'"
+
+# deploy/argocd/root.yaml: the root Application that local-up.sh applies.
+root=$(app_table <deploy/argocd/root.yaml)
+grep -qxF "root argocd $repo main deploy/argocd/apps - argocd - true true false" <<<"$root" ||
+  fail "argocd root: unexpected root Application: $root"
+# local-up.sh overrides the revision: the root's targetRevision and the apps chart's value.
+grep -qxF '          value: main' deploy/argocd/root.yaml ||
+  fail "argocd root: no helm parameter revision=main"
 
 echo "CHART OK"

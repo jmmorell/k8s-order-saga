@@ -1,4 +1,4 @@
-.PHONY: test test-short lint build up down logs smoke order dlq chart-test local-up local-down local-status local-smoke local-dlq local-reload grafana prom alerts rules-test obs-check
+.PHONY: test test-short lint build up down logs smoke order dlq chart-test local-up local-down local-status local-smoke local-dlq local-reload grafana prom alerts rules-test obs-check secrets-scan policy-test ci-local argocd
 
 test:
 	go test -race ./...
@@ -38,11 +38,14 @@ order:
 dlq:
 	@curl -fsS 'http://localhost:8222/jsz?streams=true' | python3 -c 'import json,sys; d=json.load(sys.stdin); [print(s["name"], s["state"]["messages"]) for a in d.get("account_details", []) for s in a.get("stream_detail", [])]'
 
-# Lints, renders and validates charts/service for every service; needs helm and kubeconform, no cluster.
+# Lints, renders and validates charts/service for every service, charts/saga-observability and the
+# Argo CD app-of-apps; needs helm, kubeconform and ruby, no cluster.
 chart-test:
 	./scripts/chart-test.sh
 
-# Creates the kind cluster order-saga with NATS, Postgres, Mailpit, Envoy Gateway and the five services. Idempotent.
+# Creates the kind cluster order-saga with NATS, Postgres, Mailpit, observability, Envoy Gateway and
+# Argo CD, which deploys the five services from Git. ARGOCD_REVISION=<branch> tracks a branch
+# instead of main. Idempotent.
 local-up:
 	./scripts/local-up.sh
 
@@ -60,7 +63,8 @@ local-smoke:
 local-dlq:
 	./scripts/local-dlq.sh
 
-# Rebuilds the five images, loads them into kind and restarts the Deployments.
+# Rebuilds the images tagged dev, loads them into kind and restarts their Deployments (Argo CD's
+# self-heal leaves a restart alone).
 local-reload:
 	./scripts/local-up.sh reload
 
@@ -69,6 +73,13 @@ grafana:
 	@echo "Grafana on http://localhost:3000, user admin. Password:"
 	@echo "  kubectl --context kind-order-saga -n observability get secret grafana-admin -o jsonpath='{.data.admin-password}' | base64 --decode; echo"
 	kubectl --context kind-order-saga -n observability port-forward svc/kps-grafana 3000:80
+
+# Port-forwards the Argo CD UI to https://localhost:8443 (self-signed certificate, user admin).
+# Ctrl-C stops it.
+argocd:
+	@echo "Argo CD on https://localhost:8443, user admin. Initial password:"
+	@echo "  kubectl --context kind-order-saga -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 --decode; echo"
+	kubectl --context kind-order-saga -n argocd port-forward svc/argocd-server 8443:443
 
 # Port-forwards Prometheus to http://localhost:9090. Ctrl-C stops it.
 prom:
@@ -87,3 +98,17 @@ rules-test:
 # Runs every dashboard and rule query against the live Prometheus; prints OBS OK.
 obs-check:
 	./scripts/obs-check.sh
+
+# Scans the full git history for secrets with the pinned gitleaks image; prints SECRETS OK.
+secrets-scan:
+	./scripts/secrets-scan.sh
+
+# Checks Pod Security (levels, rejected privileged pods, no violating pods) and the NetworkPolicies (curl probes) against the live cluster; prints POLICY OK.
+policy-test:
+	./scripts/policy-test.sh
+
+# Lints the GitHub workflows with the pinned actionlint image (with shellcheck), then tests
+# scripts/bump-image-tag.sh; prints BUMP OK. Needs docker.
+ci-local:
+	@. ./deploy/local/versions.env && docker run --rm -v "$(CURDIR):/repo:ro" -w /repo "$$ACTIONLINT_IMAGE" -color
+	./scripts/bump-image-tag_test.sh

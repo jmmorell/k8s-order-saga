@@ -15,6 +15,14 @@ spec:
         {{- include "service.labels" . | nindent 8 }}
     spec:
       serviceAccountName: {{ .Release.Name }}
+      automountServiceAccountToken: false
+      # Pod Security restricted (ADR 0009); 65532 is the image's numeric USER.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
       terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
       containers:
         - name: {{ .Release.Name }}

@@ -8,6 +8,8 @@ Some commands run forever (`kubectl get pods -w`). Run those in a second termina
 
 On a cluster that already has day 3 installed you will also see the `observability` namespace, its pods and Helm releases, and `nats-0` with three containers instead of two (the third is a metrics exporter). The [day-3 tour](day3-tour.md) covers them.
 
+Since day 4 the five services are deployed by Argo CD from Git rather than by `helm upgrade`, so `helm list` no longer shows them, and a `kubectl` change to their Deployments is reverted within seconds; the pod deletions and the NATS and Postgres exercises below work as written. The [day-4 tour](day4-tour.md) covers Argo CD.
+
 ## A few words first
 
 Kubernetes (K8s) runs containers for you on a group of machines. You do not tell it "start this container"; you describe the state you want ("two copies of orders, always"), and K8s keeps reality equal to that description. Everything is an object with a `kind`, a `name` and a `spec` (what you want), and K8s fills in a `status` (what is true now). The objects live in the API server, and `kubectl` is the command line that talks to it.

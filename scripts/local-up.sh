@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Creates the kind cluster and installs NATS, Postgres, Mailpit, the observability stack, Envoy
-# Gateway and the five services. Safe to re-run. 'local-up.sh reload' only rebuilds and restarts the services.
+# Gateway and Argo CD, then hands the workload (the five services, saga-observability and the
+# NetworkPolicies) to Argo CD's app-of-apps (ADR 0010). ARGOCD_REVISION (default main) is the Git
+# revision Argo CD tracks. Safe to re-run. 'local-up.sh reload' only rebuilds and restarts the
+# services.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -11,6 +14,7 @@ CLUSTER=order-saga
 CTX="kind-${CLUSTER}"
 K=(kubectl --context "$CTX")
 SERVICES=(orders inventory payments notifications loadgen)
+ARGOCD_REVISION=${ARGOCD_REVISION:-main}
 
 cluster_exists() {
   kind get clusters 2>/dev/null | grep -qx "$CLUSTER"
@@ -22,6 +26,11 @@ check_prereqs() {
   for tool in kind kubectl helm docker openssl; do
     command -v "$tool" >/dev/null || { echo "missing required tool: $tool" >&2; exit 1; }
   done
+  # It is substituted into deploy/argocd/root.yaml with sed.
+  if ! [[ $ARGOCD_REVISION =~ ^[A-Za-z0-9._/-]+$ ]]; then
+    echo "ARGOCD_REVISION '$ARGOCD_REVISION' is not a plain branch, tag or commit name" >&2
+    exit 1
+  fi
   if [ "$(grep -c "image: $KIND_NODE_IMAGE\$" deploy/local/kind-cluster.yaml)" -ne 3 ]; then
     echo "kind-cluster.yaml node images do not match KIND_NODE_IMAGE in versions.env" >&2
     exit 1
@@ -40,6 +49,20 @@ create_cluster() {
   fi
   echo "==> creating kind cluster $CLUSTER"
   kind create cluster --config deploy/local/kind-cluster.yaml --name "$CLUSTER"
+}
+
+# Clusters from day 2 and 3 installed the services and saga-observability with Helm. Argo CD
+# applies the same objects without Helm, so the old releases would be left behind, half owned by
+# both. Rather than adopting them, ask for a fresh cluster once.
+check_no_helm_workload() {
+  local releases
+  releases=$(helm list --kube-context "$CTX" -A -q --filter \
+    "^($(IFS='|'; echo "${SERVICES[*]}")|saga-observability)\$" 2>/dev/null || true)
+  if [ -n "$releases" ]; then
+    echo "this cluster still has the Helm releases of an older local-up: $(tr '\n' ' ' <<<"$releases")" >&2
+    echo "Argo CD now deploys them; recreate the cluster once: make local-down && make local-up" >&2
+    exit 1
+  fi
 }
 
 apply_namespaces() {
@@ -152,18 +175,14 @@ install_observability() {
   for d in kps-operator kps-kube-state-metrics kps-grafana otel-collector; do
     "${K[@]}" -n observability rollout status "deployment/$d" --timeout=300s
   done
-  "${K[@]}" -n observability rollout status daemonset/kps-prometheus-node-exporter --timeout=180s
   "${K[@]}" -n observability rollout status statefulset/tempo --timeout=180s
   "${K[@]}" -n observability rollout status statefulset/loki --timeout=180s
   # The operator creates these StatefulSets asynchronously; wait on the custom resources instead.
   "${K[@]}" -n observability wait --for=condition=Available prometheus/kps-prometheus --timeout=300s
   "${K[@]}" -n observability wait --for=condition=Available alertmanager/kps-alertmanager --timeout=300s
   "${K[@]}" -n platform rollout status statefulset/nats --timeout=180s
-
-  # Needs the PrometheusRule CRD from kube-prometheus-stack, installed above.
-  echo "==> installing saga-observability chart (dashboard, SLO, alerts)"
-  helm upgrade --install saga-observability charts/saga-observability \
-    --kube-context "$CTX" -n observability
+  # charts/saga-observability (dashboard, SLO, alerts) is Argo CD's; it needs the PrometheusRule
+  # CRD installed above.
 }
 
 install_gateway() {
@@ -177,48 +196,124 @@ install_gateway() {
   "${K[@]}" -n shop wait --for=condition=Programmed gateway/shop --timeout=180s
 }
 
+# Prints <image.repository>:<image.tag> from deploy/local/values/<service>.yaml (the tag unquoted),
+# the reference the chart deploys, so the cluster never pulls a tag built here from the registry.
+image_ref() {
+  awk '/^image:[[:space:]]*$/ {f=1; next} f && /^[^[:space:]#]/ {f=0}
+    f && $1 == "repository:" {r=$2} f && $1 == "tag:" {t=$2}
+    END {gsub(/"/, "", r); gsub(/"/, "", t); if (r == "" || t == "") exit 1; print r ":" t}' \
+    "deploy/local/values/$1.yaml" || { echo "deploy/local/values/$1.yaml: no image.repository or image.tag" >&2; exit 1; }
+}
+
+# Services whose values tag is dev, the tag of a local build. Any other tag is a release that
+# CI pushed to GHCR; the nodes pull it, and local code is never loaded under a release tag.
+dev_services() {
+  local svc ref
+  for svc in "${SERVICES[@]}"; do
+    ref=$(image_ref "$svc")
+    if [ "${ref##*:}" = dev ]; then
+      echo "$svc"
+    else
+      echo "    $svc: release tag ${ref##*:}, pulled from the registry, not built" >&2
+    fi
+  done
+}
+
+# Builds each dev-tagged service for the host's architecture (kind load cannot load a multi-arch
+# image). Runs before Argo CD syncs, so the dev tag is on the nodes when the pods start.
 build_and_load_images() {
   echo "==> building and loading service images"
-  local svc
-  for svc in "${SERVICES[@]}"; do
-    docker build -q --build-arg SERVICE="$svc" -t "k8s-order-saga/$svc:dev" . >/dev/null
+  local svc ref devs images=()
+  devs=$(dev_services)
+  for svc in $devs; do
+    ref=$(image_ref "$svc")
+    docker build -q --build-arg SERVICE="$svc" -t "$ref" . >/dev/null
+    images+=("$ref")
   done
-  local images=()
-  for svc in "${SERVICES[@]}"; do images+=("k8s-order-saga/$svc:dev"); done
+  if [ "${#images[@]}" -eq 0 ]; then
+    echo "    no service uses the dev tag; nothing to build"
+    return
+  fi
+  echo "    ${images[*]}"
   kind load docker-image --name "$CLUSTER" "${images[@]}"
 }
 
-# Installs all five releases at once. A service opens its HTTP port only after Postgres and NATS
-# answer and waits for both without giving up, so the chart's startup probe gives it up to
-# 2 minutes, after which the kubelet restarts it; liveness never depends on them.
-install_services() {
-  echo "==> installing services"
-  local svc
-  for svc in "${SERVICES[@]}"; do
-    helm upgrade --install "$svc" charts/service --kube-context "$CTX" -n shop \
-      -f "deploy/local/values/$svc.yaml"
+# Argo CD itself is bootstrap, installed here with Helm; the workload is Argo CD's (ADR 0010).
+# Its UI is reached with make argocd (port-forward); the Service stays ClusterIP.
+install_argocd() {
+  echo "==> installing argo-cd chart $ARGOCD_CHART_VERSION"
+  helm repo add argo https://argoproj.github.io/argo-helm --force-update >/dev/null
+  helm upgrade --install argocd argo/argo-cd --version "$ARGOCD_CHART_VERSION" \
+    --kube-context "$CTX" -n argocd -f deploy/local/values/argo-cd.yaml
+  local d
+  for d in argocd-redis argocd-repo-server argocd-server; do
+    "${K[@]}" -n argocd rollout status "deployment/$d" --timeout=180s
   done
+  "${K[@]}" -n argocd rollout status statefulset/argocd-application-controller --timeout=180s
 }
 
-wait_services() {
-  echo "==> waiting for services"
-  local svc
-  for svc in "${SERVICES[@]}"; do
-    "${K[@]}" -n shop rollout status "deployment/$svc" --timeout=180s
+# The root Application, tracking ARGOCD_REVISION: its own targetRevision and the revision value it
+# passes to deploy/argocd/apps, so every child Application tracks the same revision.
+apply_root_app() {
+  echo "==> applying the root Application (revision $ARGOCD_REVISION)"
+  sed -E "s#^( *(targetRevision|value): )main\$#\1${ARGOCD_REVISION}#" deploy/argocd/root.yaml |
+    "${K[@]}" apply -f -
+}
+
+# Waits until root and the Applications it renders are all Synced and Healthy. A service opens its
+# HTTP port only after Postgres and NATS answer, and its startup probe gives it up to 2 minutes.
+wait_apps() {
+  echo "==> waiting for the Argo CD Applications (Synced and Healthy)"
+  local want=$((1 + ${#SERVICES[@]} + 2)) deadline=$((SECONDS + 300)) status ok=0
+  while :; do
+    status=$("${K[@]}" -n argocd get applications.argoproj.io \
+      -o jsonpath='{range .items[*]}{.metadata.name} {.status.sync.status} {.status.health.status}{"\n"}{end}')
+    # Three polls in a row: right after a sync an Application can read Synced before the
+    # controller has compared it again.
+    if [ "$(grep -c ' Synced Healthy$' <<<"$status")" -eq "$want" ] &&
+      [ "$(grep -c . <<<"$status")" -eq "$want" ]; then
+      ok=$((ok + 1))
+    else
+      ok=0
+    fi
+    if [ "$ok" -ge 3 ]; then
+      echo "    $want Applications Synced and Healthy"
+      return
+    fi
+    if [ "$SECONDS" -ge "$deadline" ]; then
+      echo "Applications not Synced and Healthy after 300 s:" >&2
+      echo "$status" >&2
+      exit 1
+    fi
+    sleep 5
   done
 }
 
 if [ "${1:-}" = reload ]; then
+  # A restart only changes the pod template's restartedAt annotation, which is not in Git, so
+  # Argo CD's self-heal leaves it alone (ADR 0010).
+  if [ -z "$(dev_services 2>/dev/null)" ]; then
+    dev_services >/dev/null # names each service and its release tag on stderr
+    echo "no service uses the dev tag, so there is no local code to load. To work on local code: on a branch run" >&2
+    echo "  scripts/bump-image-tag.sh dev   # sets tag: \"dev\" in the values files; commit and push the branch" >&2
+    echo "  ARGOCD_REVISION=<branch> make local-up   # Argo CD tracks the branch; then make local-reload" >&2
+    exit 1
+  fi
   build_and_load_images
-  for svc in "${SERVICES[@]}"; do
+  svcs=$(dev_services 2>/dev/null) # build_and_load_images already named the skipped ones
+  for svc in $svcs; do
     "${K[@]}" -n shop rollout restart "deployment/$svc"
   done
-  wait_services
+  echo "==> waiting for services"
+  for svc in $svcs; do
+    "${K[@]}" -n shop rollout status "deployment/$svc" --timeout=180s
+  done
   exit 0
 fi
 
 check_prereqs
 create_cluster
+check_no_helm_workload
 apply_namespaces
 ensure_secrets
 install_platform
@@ -226,9 +321,10 @@ wait_platform
 install_observability
 install_gateway
 build_and_load_images
-install_services
-wait_services
-echo "==> local cluster ready (context $CTX)"
+install_argocd
+apply_root_app
+wait_apps
+echo "==> local cluster ready (context $CTX, Argo CD tracking $ARGOCD_REVISION)"
 echo "orders: http://localhost:8080/orders"
 echo "next:   make local-smoke | make local-status | make local-dlq | make local-reload"
-echo "        make grafana | make prom | make alerts | make obs-check"
+echo "        make grafana | make prom | make alerts | make obs-check | make argocd"

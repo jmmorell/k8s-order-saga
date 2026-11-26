@@ -81,14 +81,16 @@ Day 2 runs the same services on a three-node [kind](https://kind.sigs.k8s.io/) c
 make local-up      # creates the cluster order-saga and installs everything; safe to re-run
 make local-smoke   # same checks as make smoke, against the cluster; prints SMOKE OK
 make local-status  # nodes and all pods
-make local-reload  # rebuilds the five images, loads them into kind and restarts the Deployments
+make local-reload  # rebuilds the images tagged dev, loads them into kind and restarts their Deployments (fails if none is tagged dev)
 make local-dlq     # message count of every JetStream stream
 make local-down    # deletes the cluster, its data and its Secret
 ```
 
 The orders API is at `http://localhost:8080/orders`. Only the `/orders` path is routed; `/healthz` and `/readyz` return 404 from outside. Every `kubectl` and `helm` call passes the context `kind-order-saga`, so the cluster never mixes with your other contexts. (`kind create cluster` does switch kubectl's current context to `kind-order-saga`; the scripts never rely on it.)
 
-After changing code, use `make local-reload`: re-running `make local-up` rebuilds and loads the `:dev` images but does not restart running pods.
+After changing code, use `make local-reload`: re-running `make local-up` rebuilds and loads the `:dev` images but does not restart running pods. Since day 4 the services are deployed by Argo CD from Git (see "Deploy from Git" below), so a change to their values files or to `charts/service` reaches the cluster only once it is pushed to the branch Argo CD tracks.
+
+Once `main` carries a release tag (a 7-hex SHA, see the release section of the day-4 tour), `make local-reload` has nothing to build and exits with an error, and branches cut from `main` inherit those tags. To work on local code again, on a branch: `scripts/bump-image-tag.sh dev`, commit and push the branch, `ARGOCD_REVISION=<branch> make local-up` (Argo CD tracks the branch), then `make local-reload`. Never merge those `dev` tags into `main`.
 
 `make smoke` and `make local-smoke` retry the confirmed order up to 5 times when the simulated payment is declined.
 
@@ -122,6 +124,42 @@ The SLO is "99 % of orders reach a final state within 5 s", with multi-window bu
 
 To understand every piece, work through the guided tour: [docs/day3-tour.md](docs/day3-tour.md).
 
+## Security
+
+Day 4 locks the cluster down with what Kubernetes ships. See [ADR 0009](docs/adr/0009-network-policies-and-pod-security.md).
+
+- **Pod Security.** `shop` and `platform` enforce the `restricted` level: every pod runs as a non-root user, with all capabilities dropped, no privilege escalation and the default seccomp profile; anything else is rejected at admission. The namespaces running third-party charts (`observability`, `envoy-gateway-system`, `argocd`) enforce `baseline` and warn at `restricted`.
+- **No ServiceAccount tokens.** Each service has its own ServiceAccount with no permissions and no token mounted; none of them calls the Kubernetes API.
+- **Default-deny NetworkPolicies.** `shop` and `platform` deny all traffic in and out, then allow only the saga's flows (Envoy and loadgen to `orders`, the services to Postgres, NATS, Mailpit and the Collector, DNS). `observability` and `argocd` deny incoming traffic from other namespaces. The policies live in `deploy/local/policies/`.
+- **Secret scan.** `make secrets-scan` runs gitleaks over the whole Git history; CI runs it on every push.
+
+```sh
+make policy-test   # Pod Security levels, rejected privileged pods, and 7 curl probes of the traffic matrix; prints POLICY OK
+make secrets-scan  # gitleaks over the full history; prints SECRETS OK
+```
+
+Measured on kind (kindnet): kubelet probes and `kubectl port-forward` are not filtered by the policies, and a new pod's first second is not either. On GKE the policies must be re-verified.
+
+## Deploy from Git
+
+Day 4 also moves the workload to GitOps. Argo CD runs in the cluster and deploys the five services, the saga dashboard and rules, and the NetworkPolicies from this repository (an app-of-apps in `deploy/argocd/`); a change made with `kubectl` is reverted within seconds, and an object removed from Git is deleted. `make local-up` still installs the platform (Postgres, NATS, Mailpit, observability, Envoy Gateway, Argo CD) and then hands over. CI never gets cluster credentials: the cluster pulls. See [ADR 0010](docs/adr/0010-gitops-pull-model.md).
+
+```sh
+make argocd                                   # Argo CD UI on https://localhost:8443 (user admin; prints the command that reads the password)
+ARGOCD_REVISION=<branch> make local-up        # make the cluster track a branch instead of main
+gh workflow run release.yml --ref main        # release: build, scan, push to GHCR, commit the new image tag to main
+```
+
+| Workflow | When | What |
+|---|---|---|
+| `.github/workflows/ci.yml` | every push and pull request | lint, tests, chart and rule tests, secret scan, bump-script test, actionlint |
+| `.github/workflows/release.yml` | pull request | build the five images (amd64 and arm64) and scan them with Trivy; fixable HIGH/CRITICAL fails |
+| `.github/workflows/release.yml` | manual dispatch from `main` | the same, then push `ghcr.io/jmmorell/k8s-order-saga/<service>:<short-sha>` and commit that tag to `deploy/local/values/*.yaml` on `main`; Argo CD rolls it out within a few minutes |
+
+`make local-up` uses `ARGOCD_REVISION=main` unless told otherwise, and every run re-applies it: on a cluster that tracks a branch, `make local-up` without the variable moves it back to `main`. Once `main` carries a release tag, the nodes pull the images from GHCR, so the five packages must be public (GitHub may create them private on the first push: Package settings, Change visibility). A bad release is undone with `git revert` of the tag commit.
+
+To understand every piece, work through the guided tour: [docs/day4-tour.md](docs/day4-tour.md).
+
 ## Decisions
 
 | ADR | Decision |
@@ -134,6 +172,8 @@ To understand every piece, work through the guided tour: [docs/day3-tour.md](doc
 | [0006](docs/adr/0006-generic-helm-chart.md) | One generic Helm chart for the Go services |
 | [0007](docs/adr/0007-gateway-api-envoy-gateway.md) | Gateway API with Envoy Gateway as the entry point |
 | [0008](docs/adr/0008-observability-stack.md) | Observability: OTel Collector, Tempo, Loki, Prometheus and Grafana |
+| [0009](docs/adr/0009-network-policies-and-pod-security.md) | Pod Security Admission and default-deny NetworkPolicies |
+| [0010](docs/adr/0010-gitops-pull-model.md) | GitOps with Argo CD (pull model) |
 
 ## Delivery semantics
 
@@ -191,3 +231,15 @@ Before day 4 starts, the author checks that they own this part:
 - [ ] Run the payment-outage drill and receive the alert email
 - [ ] Explain in own words: span vs trace vs context propagation, counter vs histogram, SLI/SLO/error budget/burn rate, why the Collector sits in the middle
 - [ ] Read ADR 0008 and be able to defend it
+
+## Day 4 checkpoint
+
+Before day 5 starts, the author checks that they own this part:
+
+- [ ] `make local-down && make local-up && make local-smoke && make policy-test` → `SMOKE OK`, `POLICY OK` (before the merge, `ARGOCD_REVISION=day4/gitops-security make local-up`)
+- [ ] Work through [docs/day4-tour.md](docs/day4-tour.md) top to bottom
+- [ ] Right after merging, run `make local-up`, before dispatching the release: if the `day4/gitops-security` branch is deleted at merge, the Applications tracking it go to ComparisonError until `local-up` moves them to `main`
+- [ ] Then run `release.yml` once (`gh workflow run release.yml --ref main`), see the tag commit on `main`, and see Argo CD roll it out
+- [ ] Make the GHCR packages public if the first pull fails (Package settings → Change visibility)
+- [ ] Explain in own words: `baseline` vs `restricted`, default-deny and why DNS needs an allow, push vs pull deploys, why CI has no cluster credentials, what self-heal does
+- [ ] Read ADRs 0009–0010 and be able to defend them

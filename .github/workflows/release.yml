@@ -14,8 +14,10 @@ on:
 permissions:
   contents: read
 
-# Dispatches share the group 'release' and queue (never cancelled mid-run), so two releases never
-# race on main. Pull-request runs get a group per PR, so they never displace a queued release.
+# Dispatches share the group 'release', so two releases never race on main: a running dispatch is
+# never cancelled, but GitHub keeps one pending run per group, so a third dispatch made while one
+# is pending replaces the pending one. Pull-request runs get a group per PR, so they never displace
+# a queued release.
 concurrency:
   group: ${{ github.event_name == 'workflow_dispatch' && 'release' || format('release-pr-{0}', github.ref) }}
   cancel-in-progress: false
@@ -73,6 +75,7 @@ jobs:
           tags: scan/${{ matrix.service }}:${{ steps.meta.outputs.tag }}
           cache-from: type=gha,scope=${{ matrix.service }}
 
+      # Scans the runner's architecture only (amd64); the arm64 image has the same binary and modules.
       - name: Trivy (fixable HIGH and CRITICAL fail the job)
         env:
           IMAGE: scan/${{ matrix.service }}:${{ steps.meta.outputs.tag }}

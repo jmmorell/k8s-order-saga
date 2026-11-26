@@ -292,6 +292,13 @@ wait_apps() {
 if [ "${1:-}" = reload ]; then
   # A restart only changes the pod template's restartedAt annotation, which is not in Git, so
   # Argo CD's self-heal leaves it alone (ADR 0010).
+  if [ -z "$(dev_services 2>/dev/null)" ]; then
+    dev_services >/dev/null # names each service and its release tag on stderr
+    echo "no service uses the dev tag, so there is no local code to load. To work on local code: on a branch run" >&2
+    echo "  scripts/bump-image-tag.sh dev   # sets tag: \"dev\" in the values files; commit and push the branch" >&2
+    echo "  ARGOCD_REVISION=<branch> make local-up   # Argo CD tracks the branch; then make local-reload" >&2
+    exit 1
+  fi
   build_and_load_images
   svcs=$(dev_services 2>/dev/null) # build_and_load_images already named the skipped ones
   for svc in $svcs; do

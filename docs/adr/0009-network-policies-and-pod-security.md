@@ -102,7 +102,7 @@ On GKE with Dataplane V2 (Cilium) these behaviours differ (host traffic is an id
 ## Consequences
 
 - A manifest that asks for root, a capability, a host path or privileged mode in `shop` or `platform` is rejected at admission (`make policy-test` checks this with server-side dry-runs), not discovered later.
-- Changing a namespace's level is checked the same way: `kubectl label --dry-run=server` reports existing pods that would violate it, and `make policy-test` expects no such warning for any namespace at its own level.
+- Changing a namespace's level is checked with a server-side dry-run relabel, which reports existing pods that would violate it. PSA evaluates pods only when a label value changes, so `make policy-test` dry-runs `enforce-version=latest` together with the namespace's own level and expects no warning; it also runs the same check on `observability` at `restricted` and requires warnings, so the check is proven able to fail.
 - NATS switching user needed a from-zero rebuild of the local cluster once.
 - Node-level metrics are gone from the local cluster.
 - The observability, gateway and Argo CD namespaces are only at `baseline`; the warnings on every install are the to-do list.

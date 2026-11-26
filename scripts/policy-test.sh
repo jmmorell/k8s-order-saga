@@ -35,8 +35,8 @@ done
 
 echo "== privileged pods are rejected"
 for ns in shop platform; do
-  if out=$("${K[@]}" -n "$ns" run policy-test-privileged --image=busybox:1.37 --restart=Never \
-    --dry-run=server --overrides='{"spec":{"containers":[{"name":"policy-test-privileged","image":"busybox:1.37","securityContext":{"privileged":true}}]}}' \
+  if out=$("${K[@]}" -n "$ns" run policy-test-privileged --image=busybox:1.37@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec --restart=Never \
+    --dry-run=server --overrides='{"spec":{"containers":[{"name":"policy-test-privileged","image":"busybox:1.37@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec","securityContext":{"privileged":true}}]}}' \
     -- true 2>&1); then
     fail "$ns: a privileged pod was admitted"
   fi
@@ -44,16 +44,30 @@ for ns in shop platform; do
   echo "$ns: rejected"
 done
 
+# psa_warnings <namespace> <level>: the Pod Security warnings of a server-side dry run that sets
+# the namespace's enforce level. PSA evaluates existing pods only when a label value changes, and
+# relabelling to the level a namespace already has changes nothing, so the dry run also moves
+# enforce-version to "latest"; that is what makes the API server check the pods. Fails only if
+# the dry run itself fails.
+psa_warnings() {
+  local out
+  out=$("${K[@]}" label ns "$1" "pod-security.kubernetes.io/enforce=$2" \
+    pod-security.kubernetes.io/enforce-version=latest --overwrite --dry-run=server 2>&1) ||
+    fail "$1: the label dry-run failed:"$'\n'"$out"
+  grep -i 'warning' <<<"$out" || true
+}
+
 echo "== existing pods satisfy their namespace's level"
 for entry in "${levels[@]}"; do
   ns=${entry%%=*} level=${entry#*=}
-  out=$("${K[@]}" label ns "$ns" "pod-security.kubernetes.io/enforce=$level" --overwrite --dry-run=server 2>&1) ||
-    fail "$ns: the label dry-run failed:"$'\n'"$out"
-  if grep -qi 'warning' <<<"$out"; then
-    fail "$ns: pods violate '$level':"$'\n'"$out"
-  fi
+  warnings=$(psa_warnings "$ns" "$level")
+  [ -z "$warnings" ] || fail "$ns: pods violate '$level':"$'\n'"$warnings"
   echo "$ns: no violations at $level"
 done
+# The check must be able to fail: observability runs pods that are not restricted-clean.
+warnings=$(psa_warnings observability restricted)
+[ -n "$warnings" ] || fail "the Pod Security check saw no warning for observability at restricted; it cannot fail"
+echo "observability at restricted: warnings seen, so the check can fail"
 
 # Each probe is a pod that impersonates a sender through its app.kubernetes.io/name label (or has
 # no label at all) and connects with curl. "allow" needs the TCP connection to succeed (and an

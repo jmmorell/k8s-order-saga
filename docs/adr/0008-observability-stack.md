@@ -91,6 +91,8 @@ The whole cluster, observability included, must stay under 6 GB as reported by `
 
 Measured with `kubectl top nodes` with loadgen running: about 2.7 GB for the whole cluster right after a from-zero `make local-up`, and 3.0 to 3.6 GB after several minutes and two re-runs (Prometheus about 250 MiB, Grafana with its sidecars about 420 MiB, Tempo about 110 MiB, the Collector about 40 MiB). With Loki added: about 3.7 to 3.9 GB (Loki about 75 MiB, the Collector about 85 MiB once it carries logs).
 
+> **Day 4 note.** node-exporter has since been disabled: it needs host namespaces and host paths, which the `baseline` Pod Security level of `observability` forbids, and on kind it only measured the Docker host. See [ADR 0009](0009-network-policies-and-pod-security.md). The mentions of it above are the day-3 record.
+
 ## Alternatives considered
 
 - Services exporting straight to Tempo and Prometheus (OTLP receiver or remote write): one hop fewer, but every backend change touches every service, and there is nowhere to batch, limit memory or fan out.
